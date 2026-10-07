@@ -243,6 +243,7 @@ function dessiner() {
     if (der) h += `<div class="sous">${jj(der.jour)} : ${esc(formatSeries(der.series))}${st.cran ? ` · cran ${esc(st.cran)}` : ""}</div>`;
     else h += `<div class="sous">pas encore d'historique${st.cran ? ` · cran ${esc(st.cran)}` : ""}</div>`;
     if (ci) h += `<div class="cible ${ci.monte ? "monte" : ""}">→ ${esc(ci.texte)}</div>`;
+    if (e?.note && ouvert !== nom) h += `<div class="remarque">✎ ${esc(e.note)}</div>`;
     if (faites.length)
       h += `<div class="series">${faites.map((x, i) => `<span class="serie ${choisie?.[0] === nom && choisie[1] === i ? "choisie" : ""}" data-serie="${i}" data-nom="${esc(nom)}">${kg(x.c)}×${x.r}</span>`).join("")}</div>`;
     h += `<div class="saisie">
@@ -250,6 +251,7 @@ function dessiner() {
           <span class="val">${kg(st.c)}</span><button data-pas="1">+1</button><button data-pas="2.5">+2,5</button></div>
         <div class="rangee"><label>reps</label><button data-reps="-1">−</button><span class="val">${st.r}</span><button data-reps="1">+</button></div>
         <div class="rangee"><label>cran</label><input data-cran value="${esc(st.cran)}" inputmode="text" placeholder="—"></div>
+        <input class="note-exo" data-note-exo value="${esc(e?.note || "")}" placeholder="Note sur l'exercice (sensations, réglage, douleur…)">
         <button class="gros" data-valider>Série ${faites.length + 1} ✓</button>
         ${choisie?.[0] === nom ? `<button class="gros danger" data-retirer>Retirer ${kg(faites[choisie[1]]?.c)}×${faites[choisie[1]]?.r}</button>` : ""}
       </div></div>`;
@@ -454,11 +456,17 @@ document.addEventListener("click", (ev) => {
     const st = saisie[nom];
     let e = s.exos.find((x) => x.nom === nom);
     if (!e) { e = { nom, series: [], cran: "" }; s.exos.push(e); }
-    e.series.push({ c: st.c, r: st.r });
+    const maintenant = new Date();
+    e.series.push({ c: st.c, r: st.r, t: maintenant.toTimeString().slice(0, 8) });
     e.cran = st.cran || "";
     navigator.vibrate?.(30);
     sauver();
-    lancerRepos();
+    const n = ctx?.schema?.series || 4;
+    if (e.series.length >= n) finExercice(nom);
+    else {
+      const der = derniereFois(nom), ci = der ? cible(der.series) : null;
+      lancerRepos(nom, `${nom} · série ${e.series.length + 1}/${n} ensuite`, `${kg(st.c)} kg × ${ci?.r && ci.c === st.c ? ci.r : st.r}`);
+    }
   } else if (t.classList.contains("serie")) {
     const i = Number(t.dataset.serie);
     choisie = choisie?.[0] === t.dataset.nom && choisie[1] === i ? null : [t.dataset.nom, i];
@@ -470,10 +478,6 @@ document.addEventListener("click", (ev) => {
     choisie = null; sauver();
   } else if (t.id === "ajouter") {
     ouvrirAjout(); return;
-  } else if (t.dataset.repos != null) {
-    const v = Number(t.dataset.repos);
-    if (v === 0) arreterRepos(); else finRepos += v * 1000;
-    return;
   } else return;
   dessiner();
 });
@@ -528,6 +532,13 @@ async function envoyerPhotos() {
 
 document.addEventListener("input", (ev) => {
   if (ev.target.id === "note") { seanceDuJour().note = ev.target.value; sauver(); }
+  if (ev.target.hasAttribute("data-note-exo")) {
+    const nom = ev.target.closest("[data-exo]").dataset.exo, s = seanceDuJour();
+    let e = s.exos.find((x) => x.nom === nom);
+    if (!e) { e = { nom, series: [], cran: saisie[nom]?.cran || "" }; s.exos.push(e); }
+    e.note = ev.target.value;
+    sauver();
+  }
   if (ev.target.hasAttribute("data-cran")) {
     const nom = ev.target.closest("[data-exo]").dataset.exo;
     saisie[nom].cran = ev.target.value.trim();
@@ -558,27 +569,105 @@ $("#fermer-ajout").addEventListener("click", () => $("#ajout").close());
 
 // ───────────────────────────────────────── repos entre les séries
 
-let finRepos = 0, tic = null;
-function lancerRepos() {
-  finRepos = Date.now() + (lire("carnet:repos", 90)) * 1000;
-  $("#repos").classList.add("actif"); $("#repos").classList.remove("fini");
-  clearInterval(tic); tic = setInterval(majRepos, 250); majRepos();
+// Durée par défaut : 2 min 30 sur les polyarticulaires (développés, tirages, presse…), 1 min 30 sur
+// l'isolation. Un ajustement ±15 s pendant le repos devient la durée de cet exercice la fois suivante.
+// Après la dernière série d'un exercice, pas de compte à rebours : le changement de machine fait le
+// repos ; un bouton en propose un si besoin.
+const POLY = /développé|tirage|rowing|presse|traction|squat|soulevé|dips|fente|hip thrust/i;
+const reposDe = (nom) => lire(`carnet:repos:${nom}`) ?? (POLY.test(nom) ? 150 : 90);
+let minu = lire("carnet:minuteur");   // {nom, quoi, cible, duree, fin, restant (si en pause), mode}
+let tic = null, sonne = false;
+// Les boutons ne sont réécrits que s'ils changent : réécrits à chaque tic (4 fois par seconde),
+// un appui tombant entre deux réécritures se perdait.
+function boutons(html) { const b = $("#min-boutons"); if (b.dataset.html !== html) { b.innerHTML = html; b.dataset.html = html; } }
+
+function lancerRepos(nom, quoi, cible) {
+  const duree = reposDe(nom);
+  minu = { nom, quoi, cible, duree, fin: Date.now() + duree * 1000, restant: null, mode: "repos" };
+  sonne = false; garder(); ecranAllume();
 }
+function finExercice(nom) {
+  minu = { nom, quoi: `${nom} : terminé ✓`, cible: "Repos libre le temps de changer de machine", duree: 0, fin: 0, restant: null, mode: "fin" };
+  garder();
+  setTimeout(() => { if (minu?.mode === "fin" && minu.nom === nom) arreterRepos(); }, 12000);
+}
+function garder() { ecrire("carnet:minuteur", minu); clearInterval(tic); tic = setInterval(majRepos, 250); majRepos(); }
+function arreterRepos() { minu = null; localStorage.removeItem("carnet:minuteur"); clearInterval(tic); $("#minuteur").className = "minuteur"; }
+
 function majRepos() {
-  const reste = Math.round((finRepos - Date.now()) / 1000);
-  const v = Math.abs(reste);
+  const el = $("#minuteur");
+  if (!minu) { el.className = "minuteur"; return; }
+  $("#min-quoi").textContent = minu.quoi;
+  $("#min-cible").textContent = minu.cible || "";
+  if (minu.mode === "fin") {
+    el.className = "minuteur actif";
+    $("#chrono").textContent = "";
+    $("#min-jauge").style.width = "0";
+    boutons(`<button data-min="repos2" class="fort">Repos 2:00</button><button data-min="repos1">1:30</button><span></span><button data-min="stop">OK</button>`);
+    return;
+  }
+  const reste = minu.restant ?? (minu.fin - Date.now()) / 1000;
+  const v = Math.round(Math.abs(reste));
   $("#chrono").textContent = `${reste < 0 ? "+" : ""}${Math.floor(v / 60)}:${String(v % 60).padStart(2, "0")}`;
-  if (reste <= 0 && !$("#repos").classList.contains("fini")) {
-    $("#repos").classList.add("fini");
-    navigator.vibrate?.([200, 100, 200]);
+  $("#min-jauge").style.width = `${Math.max(0, Math.min(100, 100 * (1 - reste / minu.duree)))}%`;
+  el.className = `minuteur actif ${reste <= 0 ? "fini" : ""} ${minu.restant != null ? "pause" : ""}`;
+  boutons(`<button data-min="pause">${minu.restant != null ? "▶ Reprendre" : "⏸ Pause"}</button>`
+    + `<button data-min="-15">−15 s</button><button data-min="15">+15 s</button>`
+    + `<button data-min="stop" class="${reste <= 0 ? "fort" : ""}">${reste <= 0 ? "Go" : "Passer"}</button>`);
+  if (reste <= 0 && !sonne) {
+    sonne = true;
+    navigator.vibrate?.([300, 150, 300, 150, 300]);
+    bip();
   }
 }
-function arreterRepos() { clearInterval(tic); $("#repos").classList.remove("actif"); }
+
+function bip() {
+  // Trois bips courts, si le téléphone n'est pas en silencieux (la vibration, elle, passe toujours).
+  try {
+    const ac = new (window.AudioContext || window.webkitAudioContext)();
+    [[0, 880], [0.25, 880], [0.5, 1320]].forEach(([debut, freq]) => {
+      const o = ac.createOscillator(), g = ac.createGain();
+      o.frequency.value = freq;
+      o.connect(g); g.connect(ac.destination);
+      g.gain.setValueAtTime(0.25, ac.currentTime + debut);
+      g.gain.exponentialRampToValueAtTime(0.001, ac.currentTime + debut + 0.2);
+      o.start(ac.currentTime + debut); o.stop(ac.currentTime + debut + 0.22);
+    });
+  } catch {}
+}
+
+$("#minuteur").addEventListener("click", (ev) => {
+  const b = ev.target.closest("[data-min]");
+  if (!b || !minu) return;
+  const a = b.dataset.min;
+  if (a === "stop") return arreterRepos();
+  if (a === "repos2" || a === "repos1") {
+    minu = { ...minu, mode: "repos", quoi: `Repos avant l'exercice suivant`, cible: "", duree: a === "repos2" ? 120 : 90 };
+    minu.fin = Date.now() + minu.duree * 1000; sonne = false;
+  } else if (a === "pause") {
+    if (minu.restant != null) { minu.fin = Date.now() + minu.restant * 1000; minu.restant = null; }
+    else minu.restant = (minu.fin - Date.now()) / 1000;
+  } else {
+    const d = Number(a);
+    if (minu.restant != null) minu.restant += d; else minu.fin += d * 1000;
+    minu.duree = Math.max(15, minu.duree + d);
+    if (minu.nom && minu.mode === "repos" && !minu.quoi.startsWith("Repos avant")) ecrire(`carnet:repos:${minu.nom}`, minu.duree);
+    if ((minu.restant ?? (minu.fin - Date.now()) / 1000) > 0) sonne = false;
+  }
+  garder();
+});
+
+// L'écran reste allumé pendant la séance (sinon il se verrouille entre deux séries).
+let verrou = null;
+async function ecranAllume() {
+  try { if (!verrou && "wakeLock" in navigator) { verrou = await navigator.wakeLock.request("screen"); verrou.addEventListener("release", () => (verrou = null)); } } catch {}
+}
 
 // ───────────────────────────────────────── démarrage
 
 window.addEventListener("online", synchroniser);
-document.addEventListener("visibilitychange", () => { if (!document.hidden) charger(); });
+document.addEventListener("visibilitychange", () => { if (!document.hidden) { charger(); if (minu) { garder(); ecranAllume(); } } });
+if (minu) garder();
 if ("serviceWorker" in navigator) navigator.serviceWorker.register("sw.js");
 dessiner();
 if (cle) charger();

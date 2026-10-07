@@ -57,14 +57,25 @@
     background: var(--carte); color: var(--texte); font: inherit; padding: 10px; }
   .pause { color: var(--doux); font-size: 14px; }
   .alerte { color: var(--jaune); }
-  .repos { position: fixed; left: 16px; right: 16px; bottom: calc(16px + env(safe-area-inset-bottom));
-    background: var(--carte2); border-radius: 16px; padding: 12px 16px; display: none;
-    align-items: center; justify-content: space-between; box-shadow: 0 8px 30px rgba(0,0,0,.6); }
-  .repos.actif { display: flex; }
-  .repos .chrono { font-size: 30px; font-weight: 700; font-variant-numeric: tabular-nums; }
-  .repos.fini .chrono { color: var(--vert); }
-  .repos button { border: 0; background: var(--carte); color: var(--texte); border-radius: 10px; height: 40px;
-    min-width: 48px; font-size: 15px; }
+  /* Minuteur de repos (« .repos » est déjà pris par le conseil du jour : renommé). */
+  .minuteur { position: fixed; left: 12px; right: 12px; bottom: calc(12px + env(safe-area-inset-bottom));
+    background: var(--carte2); border-radius: 18px; padding: 12px 14px 14px; display: none;
+    box-shadow: 0 8px 30px rgba(0,0,0,.7); }
+  .minuteur.actif { display: block; }
+  .minuteur .quoi { font-size: 13px; color: var(--doux); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .minuteur .haut { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+  .minuteur .chrono { font-size: 40px; font-weight: 700; font-variant-numeric: tabular-nums; line-height: 1.1; }
+  .minuteur.fini .chrono { color: var(--vert); }
+  .minuteur.pause .chrono { color: var(--jaune); }
+  .minuteur .jauge { height: 5px; border-radius: 3px; background: var(--carte); margin: 8px 0 10px; overflow: hidden; }
+  .minuteur .jauge i { display: block; height: 100%; background: var(--bleu); transition: width .25s linear; }
+  .minuteur.fini .jauge i { background: var(--vert); }
+  .minuteur .boutons { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; }
+  .minuteur button { border: 0; background: var(--carte); color: var(--texte); border-radius: 10px; height: 44px; font-size: 15px; }
+  .minuteur button.fort { background: var(--bleu); color: #fff; font-weight: 600; }
+  .note-exo { width: 100%; height: 40px; border-radius: 10px; border: 1px solid var(--ligne); background: var(--bg);
+    color: var(--texte); font-size: 15px; padding: 0 10px; margin-top: 8px; }
+  .exo .remarque { color: var(--jaune); font-size: 13px; margin-top: 4px; }
   dialog { background: var(--carte); color: var(--texte); border: 0; border-radius: 16px; width: calc(100% - 32px);
     max-height: 80vh; padding: 14px; }
   dialog::backdrop { background: rgba(0,0,0,.7); }
@@ -108,9 +119,11 @@
 <div class="onglets"><button data-onglet="seance" class="choisi">Séance</button><button data-onglet="progres">Progrès</button></div>
 <main id="app"></main>
 <input type="file" id="fichier-photo" accept="image/*" capture="environment" hidden>
-<div class="repos" id="repos">
-  <div><div class="sous">Repos</div><div class="chrono" id="chrono">1:30</div></div>
-  <div><button data-repos="-15">−15</button> <button data-repos="15">+15</button> <button data-repos="0">✕</button></div>
+<div class="minuteur" id="minuteur">
+  <div class="quoi" id="min-quoi"></div>
+  <div class="haut"><div class="chrono" id="chrono">1:30</div><div class="sous" id="min-cible"></div></div>
+  <div class="jauge"><i id="min-jauge"></i></div>
+  <div class="boutons" id="min-boutons"></div>
 </div>
 <dialog id="ajout">
   <input id="cherche" placeholder="Exercice…" autocomplete="off">
