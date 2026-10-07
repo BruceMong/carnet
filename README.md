@@ -14,4 +14,10 @@ service worker) pour noter ses séries au téléphone, à la salle, même sans r
   « contexte » : séance du jour selon la rotation push / pull / legs, dernière fois et cible de
   chaque exercice (double progression), conseil d'intensité tiré de la montre.
 
+- **Progrès** : calendrier des séances, séries par semaine, courbe de chaque exercice (1RM estimé,
+  charge), douleur à l'épaule, poids, sommeil, VFC, FC au repos, heure de coucher, allure de course —
+  en SVG écrit à la main, sans bibliothèque, pour marcher hors ligne.
+- **Photos de suivi** : redimensionnées sur le téléphone (1280 px, JPEG), déposées dans une table de
+  transit ; le PC les range dans son dossier puis les efface de la base.
+
 Publié par GitHub Pages depuis `main`.
