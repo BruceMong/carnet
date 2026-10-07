@@ -1,0 +1,97 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#1c1c1e">
+<title>Carnet</title>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="icon-192.png">
+<style>
+  :root {
+    --bg: #000; --carte: #1c1c1e; --carte2: #2c2c2e; --ligne: #38383a;
+    --texte: #f2f2f7; --doux: #8e8e93; --bleu: #0a84ff; --vert: #30d158;
+    --jaune: #ffd60a; --rouge: #ff453a; --violet: #bf5af2;
+  }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body { margin: 0; background: var(--bg); color: var(--texte);
+    font: 16px/1.4 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  body { padding: env(safe-area-inset-top) 16px calc(96px + env(safe-area-inset-bottom)); }
+  header { display: flex; align-items: baseline; justify-content: space-between; padding: 14px 0 6px; }
+  h1 { font-size: 26px; margin: 0; }
+  .etat { font-size: 13px; color: var(--doux); }
+  .etat.ok { color: var(--vert); } .etat.attente { color: var(--jaune); } .etat.erreur { color: var(--rouge); }
+  .sous { color: var(--doux); font-size: 14px; }
+  .carte { background: var(--carte); border-radius: 14px; padding: 14px; margin: 10px 0; }
+  .conseil b { display: block; margin-bottom: 4px; }
+  .conseil.repos b { color: var(--rouge); } .conseil.leger b { color: var(--jaune); }
+  .conseil.intense b, .conseil.modere b { color: var(--vert); }
+  .types { display: flex; gap: 8px; margin: 12px 0 4px; overflow-x: auto; }
+  .types button { flex: 1; padding: 10px 0; border-radius: 10px; border: 0; background: var(--carte2);
+    color: var(--texte); font-size: 15px; text-transform: capitalize; }
+  .types button.choisi { background: var(--bleu); font-weight: 600; }
+  .exo h3 { margin: 0; font-size: 17px; display: flex; justify-content: space-between; gap: 8px; }
+  .exo h3 .n { color: var(--doux); font-weight: 400; font-size: 14px; white-space: nowrap; }
+  .exo.fait h3 { color: var(--vert); }
+  .exo .cible { color: var(--bleu); font-size: 14px; margin-top: 2px; }
+  .exo .cible.monte { color: var(--vert); }
+  .series { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+  .serie { background: var(--carte2); border-radius: 8px; padding: 5px 10px; font-variant-numeric: tabular-nums;
+    border: 1px solid transparent; }
+  .serie.choisie { border-color: var(--rouge); }
+  .saisie { margin-top: 12px; display: none; }
+  .exo.ouvert .saisie { display: block; }
+  .rangee { display: flex; align-items: center; gap: 6px; margin: 8px 0; }
+  .rangee label { width: 64px; color: var(--doux); font-size: 14px; }
+  .rangee button { min-width: 44px; height: 44px; border-radius: 10px; border: 0; background: var(--carte2);
+    color: var(--texte); font-size: 16px; }
+  .rangee .val { flex: 1; text-align: center; font-size: 24px; font-weight: 600; font-variant-numeric: tabular-nums; }
+  .rangee input { flex: 1; height: 44px; border-radius: 10px; border: 1px solid var(--ligne); background: var(--bg);
+    color: var(--texte); font-size: 16px; padding: 0 10px; }
+  .gros { width: 100%; height: 52px; border: 0; border-radius: 12px; background: var(--bleu); color: #fff;
+    font-size: 17px; font-weight: 600; margin-top: 6px; }
+  .gros.danger { background: var(--rouge); }
+  .lien { background: none; border: 0; color: var(--bleu); font-size: 16px; padding: 10px 0; }
+  textarea { width: 100%; min-height: 70px; border-radius: 10px; border: 1px solid var(--ligne);
+    background: var(--carte); color: var(--texte); font: inherit; padding: 10px; }
+  .pause { color: var(--doux); font-size: 14px; }
+  .alerte { color: var(--jaune); }
+  .repos { position: fixed; left: 16px; right: 16px; bottom: calc(16px + env(safe-area-inset-bottom));
+    background: var(--carte2); border-radius: 16px; padding: 12px 16px; display: none;
+    align-items: center; justify-content: space-between; box-shadow: 0 8px 30px rgba(0,0,0,.6); }
+  .repos.actif { display: flex; }
+  .repos .chrono { font-size: 30px; font-weight: 700; font-variant-numeric: tabular-nums; }
+  .repos.fini .chrono { color: var(--vert); }
+  .repos button { border: 0; background: var(--carte); color: var(--texte); border-radius: 10px; height: 40px;
+    min-width: 48px; font-size: 15px; }
+  dialog { background: var(--carte); color: var(--texte); border: 0; border-radius: 16px; width: calc(100% - 32px);
+    max-height: 80vh; padding: 14px; }
+  dialog::backdrop { background: rgba(0,0,0,.7); }
+  dialog input { width: 100%; height: 44px; border-radius: 10px; border: 1px solid var(--ligne);
+    background: var(--bg); color: var(--texte); font-size: 16px; padding: 0 10px; }
+  .choix { max-height: 50vh; overflow-y: auto; margin-top: 8px; }
+  .choix button { display: block; width: 100%; text-align: left; background: none; border: 0;
+    border-bottom: 1px solid var(--ligne); color: var(--texte); padding: 12px 4px; font-size: 16px; }
+  .choix button span { color: var(--doux); font-size: 13px; }
+  .accueil { text-align: center; margin-top: 30vh; color: var(--doux); }
+</style>
+</head>
+<body>
+<header>
+  <h1 id="titre">Carnet</h1>
+  <span id="etat" class="etat"></span>
+</header>
+<main id="app"></main>
+<div class="repos" id="repos">
+  <div><div class="sous">Repos</div><div class="chrono" id="chrono">1:30</div></div>
+  <div><button data-repos="-15">−15</button> <button data-repos="15">+15</button> <button data-repos="0">✕</button></div>
+</div>
+<dialog id="ajout">
+  <input id="cherche" placeholder="Exercice…" autocomplete="off">
+  <div class="choix" id="choix"></div>
+  <button class="lien" id="fermer-ajout">Annuler</button>
+</dialog>
+<script type="module" src="app.js"></script>
+</body>
+</html>
