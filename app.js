@@ -50,7 +50,8 @@ let distantes = lire("carnet:seances", []);    // séances des 90 derniers jours
 const jour = aujourdhui();
 let doc = lire(`carnet:seance:${jour}`)?.doc || null;
 let ouvert = null;                            // exercice dont la saisie est dépliée
-let saisie = {};                              // nom → {c, r, cran} en cours de réglage
+let saisie = {};                              // nom → {c, r} en cours de réglage
+let memoEdite = null;                         // exercice dont le mémo est en cours de modification
 let choisie = null;                           // [nom, index] de la série sélectionnée (pour la retirer)
 let onglet = "seance";                        // « seance » ou « progres »
 let exoGraphe = lire("carnet:exo-graphe");    // exercice tracé dans Progrès
@@ -80,11 +81,12 @@ function derniereFois(nom) {
   return mieux;
 }
 
-function cran(nom, derniere) {
-  if (derniere?.cran) return derniere.cran;
-  const r = ctx?.exercices?.find((x) => x.nom === nom)?.reglage || "";
-  const m = r.match(/cran\s*(\S+)/i);
-  return m ? m[1] : "";
+// Le mémo d'un exercice : son réglage permanent (cran, siège, prise…), pas une donnée de séance.
+// Celui du téléphone d'abord (pas encore repassé par le PC), sinon la colonne Réglage d'exercices.md.
+function memo(nom) {
+  const local = lire(`carnet:memo:${nom}`);
+  if (local != null) return local;
+  return ctx?.exercices?.find((x) => x.nom === nom)?.reglage || "";
 }
 
 function cible(series) {
@@ -236,12 +238,16 @@ function dessiner() {
     const st = saisie[nom] || (saisie[nom] = {
       c: faites.length ? faites[faites.length - 1].c : (ci?.c ?? der?.series?.[0]?.[0] ?? 20),
       r: faites.length ? faites[faites.length - 1].r : (ci?.r ?? ctx?.schema?.reps ?? 8),
-      cran: e?.cran || cran(nom, der),
     });
     h += `<div class="carte exo ${ouvert === nom ? "ouvert" : ""} ${faites.length >= n ? "fait" : ""}" data-exo="${esc(nom)}">
       <h3 data-ouvrir="${esc(nom)}">${esc(nom)}<span class="n">${faites.length}/${n}</span></h3>`;
-    if (der) h += `<div class="sous">${jj(der.jour)} : ${esc(formatSeries(der.series))}${st.cran ? ` · cran ${esc(st.cran)}` : ""}</div>`;
-    else h += `<div class="sous">pas encore d'historique${st.cran ? ` · cran ${esc(st.cran)}` : ""}</div>`;
+    if (der) h += `<div class="sous">${jj(der.jour)} : ${esc(formatSeries(der.series))}</div>`;
+    else h += `<div class="sous">pas encore d'historique</div>`;
+    const mm = memo(nom);
+    if (memoEdite === nom)
+      h += `<div class="ligne2"><input id="memo-champ" value="${esc(mm)}" placeholder="cran 15 · siège 3 · prise large…"><button data-memo-ok>OK</button></div>`;
+    else if (mm || ouvert === nom)
+      h += `<div class="memo" data-memo="${esc(nom)}">📌 ${mm ? esc(mm) : "<i>ajouter un mémo de réglage</i>"}</div>`;
     if (ci) h += `<div class="cible ${ci.monte ? "monte" : ""}">→ ${esc(ci.texte)}</div>`;
     if (e?.note && ouvert !== nom) h += `<div class="remarque">✎ ${esc(e.note)}</div>`;
     if (faites.length)
@@ -250,7 +256,6 @@ function dessiner() {
         <div class="rangee"><label>kg</label><button data-pas="-2.5">−2,5</button><button data-pas="-1">−1</button>
           <span class="val">${kg(st.c)}</span><button data-pas="1">+1</button><button data-pas="2.5">+2,5</button></div>
         <div class="rangee"><label>reps</label><button data-reps="-1">−</button><span class="val">${st.r}</span><button data-reps="1">+</button></div>
-        <div class="rangee"><label>cran</label><input data-cran value="${esc(st.cran)}" inputmode="text" placeholder="—"></div>
         <input class="note-exo" data-note-exo value="${esc(e?.note || "")}" placeholder="Note sur l'exercice (sensations, réglage, douleur…)">
         <button class="gros" data-valider>Série ${faites.length + 1} ✓</button>
         ${choisie?.[0] === nom ? `<button class="gros danger" data-retirer>Retirer ${kg(faites[choisie[1]]?.c)}×${faites[choisie[1]]?.r}</button>` : ""}
@@ -426,12 +431,20 @@ function progres() {
 // ───────────────────────────────────────── les gestes
 
 document.addEventListener("click", (ev) => {
-  const t = ev.target.closest("button, h3, .serie");
+  const t = ev.target.closest("button, h3, .serie, [data-memo]");
   if (!t) return;
   const carte = t.closest("[data-exo]");
   const nom = carte?.dataset.exo;
   const s = seanceDuJour();
-  if (t.dataset.onglet) {
+  if (t.closest("[data-memo]")) {
+    memoEdite = t.closest("[data-memo]").dataset.memo;
+    dessiner(); setTimeout(() => $("#memo-champ")?.focus(), 0); return;
+  } else if (t.hasAttribute("data-memo-ok")) {
+    const v = $("#memo-champ").value.trim().replace(/\|/g, "/");
+    ecrire(`carnet:memo:${memoEdite}`, v);
+    s.memos = { ...(s.memos || {}), [memoEdite]: v };   // part au PC avec la séance du jour
+    memoEdite = null; sauver();
+  } else if (t.dataset.onglet) {
     onglet = t.dataset.onglet; window.scrollTo(0, 0);
   } else if (t.dataset.douleur != null) {
     const v = Number(t.dataset.douleur);
@@ -455,10 +468,9 @@ document.addEventListener("click", (ev) => {
   } else if (t.hasAttribute("data-valider")) {
     const st = saisie[nom];
     let e = s.exos.find((x) => x.nom === nom);
-    if (!e) { e = { nom, series: [], cran: "" }; s.exos.push(e); }
+    if (!e) { e = { nom, series: [] }; s.exos.push(e); }
     const maintenant = new Date();
     e.series.push({ c: st.c, r: st.r, t: maintenant.toTimeString().slice(0, 8) });
-    e.cran = st.cran || "";
     navigator.vibrate?.(30);
     sauver();
     const n = ctx?.schema?.series || 4;
@@ -535,14 +547,11 @@ document.addEventListener("input", (ev) => {
   if (ev.target.hasAttribute("data-note-exo")) {
     const nom = ev.target.closest("[data-exo]").dataset.exo, s = seanceDuJour();
     let e = s.exos.find((x) => x.nom === nom);
-    if (!e) { e = { nom, series: [], cran: saisie[nom]?.cran || "" }; s.exos.push(e); }
+    if (!e) { e = { nom, series: [] }; s.exos.push(e); }
     e.note = ev.target.value;
     sauver();
   }
-  if (ev.target.hasAttribute("data-cran")) {
-    const nom = ev.target.closest("[data-exo]").dataset.exo;
-    saisie[nom].cran = ev.target.value.trim();
-  }
+
 });
 
 // Ajouter un exercice hors programme : la liste du PC, ou un nom libre (le PC le signalera).
@@ -562,7 +571,7 @@ $("#choix").addEventListener("click", (ev) => {
   const b = ev.target.closest("[data-choix]");
   if (!b) return;
   const s = seanceDuJour(), nom = b.dataset.choix;
-  if (!s.exos.find((x) => x.nom === nom)) s.exos.push({ nom, series: [], cran: "" });
+  if (!s.exos.find((x) => x.nom === nom)) s.exos.push({ nom, series: [] });
   ouvert = nom; $("#ajout").close(); sauver(); dessiner();
 });
 $("#fermer-ajout").addEventListener("click", () => $("#ajout").close());
