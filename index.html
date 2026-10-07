@@ -111,6 +111,41 @@
   .cal span.course { background: var(--jaune); } .cal span.auj { outline: 2px solid var(--texte); }
   .legende { display: flex; flex-wrap: wrap; gap: 10px; font-size: 13px; color: var(--doux); margin-top: 8px; }
   .legende i { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 4px; vertical-align: -1px; }
+  /* Onglet Santé */
+  .vert { color: var(--vert); } .jaune { color: var(--jaune); } .rouge { color: var(--rouge); } .bleu { color: var(--bleu); }
+  .alerte-carte { border: 1px solid var(--jaune); color: var(--jaune); font-size: 14px; }
+  .c-tete { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
+  .nuit { display: flex; align-items: flex-end; justify-content: space-between; margin: 6px 0 10px; }
+  .nuit .sous { text-align: right; }
+  .score { color: var(--texte); font-size: 17px; }
+  .phases { display: flex; height: 12px; border-radius: 6px; overflow: hidden; gap: 2px; }
+  .tuiles { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin: 10px 0; }
+  .tuile { background: var(--carte); border-radius: 14px; padding: 12px; min-width: 0; }
+  .t-titre { font-size: 13px; color: var(--doux); display: flex; align-items: center; gap: 6px; }
+  .t-val { font-size: 28px; font-weight: 700; font-variant-numeric: tabular-nums; line-height: 1.2; margin-top: 2px; }
+  .t-val small { font-size: 14px; font-weight: 400; color: var(--doux); }
+  .t-val.grand { font-size: 40px; }
+  .t-sous { font-size: 12px; color: var(--doux); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .pastille { width: 8px; height: 8px; border-radius: 50%; background: var(--ligne); flex: none; }
+  .pastille.vert { background: var(--vert); } .pastille.jaune { background: var(--jaune); } .pastille.rouge { background: var(--rouge); }
+  .jauge-l { margin-top: 10px; }
+  .j-haut { display: flex; justify-content: space-between; font-size: 14px; }
+  .j-haut span:last-child { color: var(--doux); font-variant-numeric: tabular-nums; }
+  .j-barre { height: 8px; border-radius: 4px; background: var(--carte2); margin-top: 5px; overflow: hidden; }
+  .j-barre i { display: block; height: 100%; border-radius: 4px; }
+  .lignes > div { display: flex; justify-content: space-between; align-items: baseline; padding: 8px 0; border-bottom: 1px solid var(--ligne); font-size: 15px; }
+  .lignes > div:last-child { border-bottom: 0; }
+  .lignes span { color: var(--doux); }
+  .ressenti { display: grid; grid-template-columns: auto 1fr auto; gap: 8px 10px; align-items: center; margin-top: 10px; font-size: 14px; }
+  .r-nom { color: var(--doux); } .r-moy { font-weight: 600; font-variant-numeric: tabular-nums; min-width: 24px; text-align: right; }
+  .points { display: grid; grid-template-columns: repeat(14, 1fr); gap: 3px; }
+  .points i { aspect-ratio: 1; border-radius: 3px; background: var(--carte2); }
+  .periode { display: flex; gap: 6px; margin: 16px 0 0; }
+  .periode button { flex: 1; border: 0; border-radius: 9px; background: var(--carte); color: var(--doux); padding: 8px 0; font-size: 14px; }
+  .periode button.choisi { background: var(--carte2); color: var(--texte); font-weight: 600; }
+  .objectif { padding: 8px 0; border-bottom: 1px solid var(--ligne); font-size: 15px; }
+  .objectif:last-child { border-bottom: 0; }
+  .objectif.fait { color: var(--vert); }
 </style>
 </head>
 <body>
@@ -118,7 +153,7 @@
   <h1 id="titre">Carnet</h1>
   <span id="etat" class="etat"></span>
 </header>
-<div class="onglets"><button data-onglet="seance" class="choisi">Séance</button><button data-onglet="progres">Progrès</button></div>
+<div class="onglets"><button data-onglet="seance" class="choisi">Séance</button><button data-onglet="sante">Santé</button><button data-onglet="progres">Progrès</button></div>
 <main id="app"></main>
 <input type="file" id="fichier-photo" accept="image/*" capture="environment" hidden>
 <div class="minuteur" id="minuteur">

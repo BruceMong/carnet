@@ -14,9 +14,13 @@ service worker) pour noter ses séries au téléphone, à la salle, même sans r
   « contexte » : séance du jour selon la rotation push / pull / legs, dernière fois et cible de
   chaque exercice (double progression), conseil d'intensité tiré de la montre.
 
+- **Santé** : les données de la montre et les calculs du panneau Santé du PC — alertes, dernière nuit
+  (durée, horaires, phases, score), VFC, FC au repos, Body Battery, stress, SpO2, respiration, semaine en
+  cours (pas, séances, minutes intensives), dette et régularité du sommeil, ressenti noté, objectifs, et
+  les courbes sur 30 ou 90 jours (poids, sommeil, VFC, FC, Body Battery, stress, pas, coucher).
 - **Progrès** : calendrier des séances, séries par semaine, courbe de chaque exercice (1RM estimé,
-  charge), douleur à l'épaule, poids, sommeil, VFC, FC au repos, heure de coucher, allure de course —
-  en SVG écrit à la main, sans bibliothèque, pour marcher hors ligne.
+  charge), douleur à l'épaule, allure de course.
+- Les courbes sont en SVG écrit à la main, sans bibliothèque, pour marcher hors ligne.
 - **Photos de suivi** : redimensionnées sur le téléphone (1280 px, JPEG), déposées dans une table de
   transit ; le PC les range dans son dossier puis les efface de la base.
 

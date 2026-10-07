@@ -53,7 +53,7 @@ let ouvert = null;                            // exercice dont la saisie est dé
 let saisie = {};                              // nom → {c, r} en cours de réglage
 let memoEdite = null;                         // exercice dont le mémo est en cours de modification
 let choisie = null;                           // [nom, index] de la série sélectionnée (pour la retirer)
-let onglet = "seance";                        // « seance » ou « progres »
+let onglet = "seance";                        // « seance », « sante » ou « progres »
 let exoGraphe = lire("carnet:exo-graphe");    // exercice tracé dans Progrès
 
 function toutesSeances() {
@@ -214,6 +214,7 @@ function dessiner() {
   }
   document.querySelectorAll("[data-onglet]").forEach((b) => b.classList.toggle("choisi", b.dataset.onglet === onglet));
   if (onglet === "progres") { app.innerHTML = progres(); return; }
+  if (onglet === "sante") { app.innerHTML = sante(); return; }
   const s = seanceDuJour();
   const p = prochaine();
   const c = ctx?.conseil;
@@ -407,26 +408,130 @@ function progres() {
       fmt: (v) => `${String(Math.round(v * 2) / 2).replace(".", ",")} kg` });
   } else h += `<div class="carte sous">Les courbes de chaque exercice apparaîtront après tes premières séances.</div>`;
 
-  // Corps et récupération (résumés journaliers poussés par le PC).
-  const J = ctx?.jours || [];
-  const pt = (cle) => J.map((x) => [x.j, x[cle]]);
-  const dern = J.filter((x) => x.vfc_bas).pop();
+  // L'épaule et la course : le reste du corps est dans l'onglet Santé.
   const douleurs = (ctx?.douleurs || []).slice();
   for (const s of toutesSeances()) if (s.douleur != null) { const i = douleurs.findIndex((x) => x[0] === s.jour); if (i >= 0) douleurs.splice(i, 1); douleurs.push([s.jour, s.douleur]); }
-  const pesees = (ctx?.pesees || []).slice();
-  for (const s of toutesSeances()) if (s.poids) { const i = pesees.findIndex((x) => x[0] === s.jour); if (i >= 0) pesees.splice(i, 1); pesees.push([s.jour, s.poids]); }
   h += courbe("Douleur à l'épaule", douleurs, { bas: 0, haut: 10, refs: [2], relier: 14, couleur: "var(--rouge)", jours: 120, legende: "sous 2 : on peut remonter" });
-  h += courbe("Poids", pesees, { relier: 60, jours: 180, fmt: (v) => `${String(Math.round(v * 10) / 10).replace(".", ",")}` });
-  const cible = ctx?.cibles?.sommeil;
-  h += courbe("Sommeil", pt("sommeil"), { refs: cible ? [cible] : [], fmt: (v) => `${Math.floor(v / 60)}h${String(Math.round(v % 60)).padStart(2, "0")}` });
-  h += courbe("VFC (nuit)", pt("vfc"), { bande: dern ? [dern.vfc_bas, dern.vfc_haut] : null, couleur: "var(--vert)", legende: "ms, bande verte : ton habituel" });
-  h += courbe("FC au repos", pt("fc"), { couleur: "var(--rouge)", legende: "bpm" });
-  h += courbe("Heure de coucher", pt("coucher"), { fmt: (v) => { const t = Math.round(v) + 1080; return `${String(Math.floor(t / 60) % 24).padStart(2, "0")}:${String(t % 60).padStart(2, "0")}`; },
-    couleur: "var(--violet)", legende: "plus c'est plat, plus c'est régulier" });
   const cr = (ctx?.courses || []).map((c) => [c[0], c[2] / c[1]]);
   if (cr.length) h += courbe("Course — allure", cr, { jours: 365, relier: 30, couleur: "var(--jaune)", ajuster: true,
     fmt: (v) => `${Math.floor(v)}'${String(Math.round((v % 1) * 60)).padStart(2, "0")}`, legende: "min/km, plus bas = plus rapide" });
   if (ctx?.genere) h += `<p class="sous">Données du PC du ${jj(ctx.genere)} à ${ctx.genere.slice(11, 16)}.</p>`;
+  return h;
+}
+
+// ───────────────────────────────────────── l'onglet Santé
+
+// Les données de la montre (résumés par jour) et les calculs du panneau Santé, poussés par le PC.
+// Mêmes seuils que le panneau : des repères tirés d'une montre, pas un diagnostic.
+const hm = (mn) => `${Math.floor(mn / 60)}h${String(Math.round(mn % 60)).padStart(2, "0")}`;
+const virgule = (v, n = 1) => String(Math.round(v * 10 ** n) / 10 ** n).replace(".", ",");
+const quand = (iso) => (iso === jour ? "aujourd'hui" : (new Date(jour) - new Date(iso)) / 864e5 === 1 ? "hier" : `le ${jj(iso)}`);
+let periode = lire("carnet:periode", 30);
+
+function pesees() {
+  // Celles du PC (poids.md et Garmin), plus celles du téléphone pas encore repassées par lui.
+  const p = (ctx?.pesees || []).slice();
+  for (const s of toutesSeances()) if (s.poids) { const i = p.findIndex((x) => x[0] === s.jour); if (i >= 0) p.splice(i, 1); p.push([s.jour, s.poids]); }
+  return p.sort((a, b) => a[0].localeCompare(b[0]));
+}
+
+function tuile(titre, valeur, unite, sous, ton) {
+  return `<div class="tuile"><div class="t-titre"><i class="pastille ${ton || ""}"></i>${esc(titre)}</div>
+    <div class="t-val">${valeur ?? "–"}<small>${valeur != null ? esc(unite) : ""}</small></div><div class="t-sous">${sous || "&nbsp;"}</div></div>`;
+}
+
+function jauge(titre, fait, cible, texte) {
+  const k = cible ? Math.min(1, (fait || 0) / cible) : 0;
+  return `<div class="jauge-l"><div class="j-haut"><span>${esc(titre)}</span><span>${texte}</span></div>
+    <div class="j-barre"><i style="width:${(k * 100).toFixed(0)}%;background:${k >= 1 ? "var(--vert)" : "var(--bleu)"}"></i></div></div>`;
+}
+
+function sante() {
+  const S = ctx?.sante;
+  if (!S) return `<div class="carte sous">Le PC n'a pas encore envoyé tes données de santé : il le fera à sa prochaine synchro.</div>`;
+  const J = ctx.jours || [], C = S.cibles || {};
+  const dernier = (cle) => { for (let i = J.length - 1; i >= 0; i--) if (J[i][cle] != null) return J[i]; return null; };
+  let h = "";
+
+  for (const a of S.alertes || []) h += `<div class="carte alerte-carte">${esc(a)}</div>`;
+
+  // La dernière nuit connue : durée face à la cible, horaires, phases.
+  const n = dernier("sommeil");
+  if (n) {
+    const ph = [["profond", "Profond", "#5e5ce6"], ["leger", "Léger", "#0a84ff"], ["paradoxal", "Paradoxal", "#64d2ff"], ["eveil", "Éveil", "#ff9f0a"]]
+      .filter(([k]) => n[k]);
+    const tot = ph.reduce((s, [k]) => s + n[k], 0) || 1;
+    const ok = n.sommeil >= C.sommeil, court = n.sommeil < C.sommeil - 60;
+    h += `<div class="carte"><div class="c-tete"><b>Nuit</b><span class="sous">${quand(n.j)}${n.couche ? ` · ${n.couche} → ${n.leve}` : ""}</span></div>
+      <div class="nuit"><div class="t-val grand ${ok ? "vert" : court ? "rouge" : "jaune"}">${hm(n.sommeil)}</div>
+        <div class="sous">cible ${hm(C.sommeil)}${n.score ? `<br>score <b class="score">${n.score}</b>` : ""}</div></div>
+      <div class="phases">${ph.map(([k, , c]) => `<i style="width:${(n[k] / tot * 100).toFixed(1)}%;background:${c}"></i>`).join("")}</div>
+      <div class="legende">${ph.map(([k, nom, c]) => `<span><i style="background:${c}"></i>${nom} ${hm(n[k])}</span>`).join("")}</div></div>`;
+  } else h += `<div class="carte sous">Aucune nuit enregistrée récemment : porte la montre la nuit, puis ouvre Garmin Connect pour la synchroniser.</div>`;
+
+  // Les mesures du matin, chacune à sa dernière valeur connue.
+  const v = dernier("vfc"), fc = dernier("fc"), bb = dernier("bb"), st = dernier("stress"), sp = dernier("spo2"), rs = dernier("resp");
+  const tonVfc = !v ? "" : v.vfc_bas && v.vfc < v.vfc_bas ? "jaune" : "vert";
+  const tonFc = !fc || !S.fc30 ? "" : fc.fc >= S.fc30 + 5 ? "rouge" : fc.fc > S.fc30 + 2 ? "jaune" : "vert";
+  const tonBb = !bb ? "" : bb.bb < 40 ? "rouge" : bb.bb < 70 ? "jaune" : "vert";
+  const tonSt = !st ? "" : st.stress > 50 ? "rouge" : st.stress > 25 ? "jaune" : "vert";
+  h += `<div class="tuiles">`
+    + tuile("VFC", v?.vfc, " ms", v ? (v.vfc_bas ? `habituel ${v.vfc_bas}–${v.vfc_haut}${v.j < jour ? ` · ${quand(v.j)}` : ""}` : quand(v.j)) : "", tonVfc)
+    + tuile("FC au repos", fc?.fc, " bpm", fc ? (S.fc30 ? `moyenne ${S.fc30} · ${quand(fc.j)}` : quand(fc.j)) : "", tonFc)
+    + tuile("Body Battery", bb?.bb, "", bb ? `max${bb.bb_min != null ? ` · min ${bb.bb_min}` : ""} · ${quand(bb.j)}` : "", tonBb)
+    + tuile("Stress", st?.stress, "", st ? `moyenne · ${quand(st.j)}` : "", tonSt)
+    + tuile("SpO2", sp ? Math.round(sp.spo2) : null, " %", sp ? `nuit · ${quand(sp.j)}` : "", sp ? (sp.spo2 < 92 ? "rouge" : "vert") : "")
+    + tuile("Respiration", rs ? Math.round(rs.resp) : null, " /min", rs ? `éveil · ${quand(rs.j)}` : "", "")
+    + `</div>`;
+
+  // La semaine en cours.
+  const auj = J.find((x) => x.j === jour);
+  const lundi = new Date(new Date(jour) - ((new Date(jour).getDay() + 6) % 7) * 864e5).toISOString().slice(0, 10);
+  const nSeances = Math.max(S.seances_semaine || 0, Object.keys(muscuParJour()).filter((d) => d >= lundi && d <= jour).length);
+  h += `<div class="carte"><b>Cette semaine</b>`
+    + jauge("Pas aujourd'hui", auj?.pas, C.pas, `${(auj?.pas || 0).toLocaleString("fr-FR")} / ${C.pas.toLocaleString("fr-FR")}`)
+    + jauge("Séances", nSeances, C.seances, `${nSeances} / ${C.seances}`)
+    + jauge("Minutes intensives", S.intensif_semaine, C.intensif, `${S.intensif_semaine ?? 0} / ${C.intensif}`)
+    + `</div>`;
+
+  // Le sommeil sur la semaine : dette, régularité, heure conseillée.
+  const r = S.regularite;
+  h += `<div class="carte"><b>Sommeil</b><div class="lignes">
+    <div><span>Dette sur 7 nuits</span><b class="${S.dette > 240 ? "rouge" : S.dette > 120 ? "jaune" : ""}">${S.nuits ? hm(S.dette) : "–"}</b></div>
+    <div><span>Coucher moyen</span><b>${r ? `${r.heure} <small class="sous">± ${r.ecart} min</small>` : "–"}</b></div>
+    <div><span>Ce soir, au lit à</span><b class="bleu">${esc(S.coucher_conseil)}</b></div></div>
+    ${r ? `<div class="sous">${r.ecart <= 30 ? "Horaires réguliers" : "Horaires irréguliers : vise la même heure chaque soir"} (${r.nuits} nuits).</div>` : ""}</div>`;
+
+  // Le ressenti noté dans le panneau, 14 derniers jours.
+  const res = Object.fromEntries((S.ressenti || []).map((x) => [x[0], x]));
+  const jours14 = Array.from({ length: 14 }, (_, k) => new Date(new Date(jour) - (13 - k) * 864e5).toISOString().slice(0, 10));
+  const coul = (x) => (x == null ? "" : `background:${["#ff453a", "#ff9f0a", "#ffd60a", "#a4e05a", "#30d158"][x - 1]}`);
+  h += `<div class="carte"><b>Ressenti</b> <span class="sous">14 jours, noté dans le panneau</span><div class="ressenti">`
+    + [["Énergie", 1], ["Humeur", 2], ["Peau", 3]].map(([nom, i]) => {
+      const vals = jours14.map((d) => res[d]?.[i] ?? null), notes = vals.filter((x) => x != null);
+      return `<span class="r-nom">${nom}</span><span class="points">${vals.map((x) => `<i style="${coul(x)}"></i>`).join("")}</span>
+        <span class="r-moy">${notes.length ? virgule(notes.reduce((a, b) => a + b, 0) / notes.length) : "–"}</span>`;
+    }).join("") + `</div></div>`;
+
+  // Les tendances, sur la période choisie.
+  const pt = (cle) => J.map((x) => [x.j, x[cle]]);
+  const o = { jours: periode, relier: periode > 30 ? 4 : 2 };
+  h += `<div class="periode">${[30, 90].map((p) => `<button data-periode="${p}" class="${p === periode ? "choisi" : ""}">${p} jours</button>`).join("")}</div>`;
+  const pes = pesees();
+  h += courbe("Poids", pes, { relier: 60, jours: 365, ajuster: true, fmt: (v) => virgule(v), legende: "kg" });
+  h += courbe("Sommeil", pt("sommeil"), { ...o, refs: [C.sommeil], fmt: hm, couleur: "#5e5ce6", legende: "pointillés : ta cible" });
+  h += courbe("VFC (nuit)", pt("vfc"), { ...o, bande: v?.vfc_bas ? [v.vfc_bas, v.vfc_haut] : null, couleur: "var(--vert)", legende: "ms, bande verte : ton habituel" });
+  h += courbe("FC au repos", pt("fc"), { ...o, couleur: "var(--rouge)", legende: "bpm" });
+  h += courbe("Body Battery", pt("bb"), { ...o, bas: 0, haut: 100, couleur: "#64d2ff", legende: "maximum du jour" });
+  h += courbe("Stress", pt("stress"), { ...o, bas: 0, couleur: "#ff9f0a", legende: "moyenne du jour" });
+  h += courbe("Pas", pt("pas"), { ...o, refs: [C.pas], bas: 0, fmt: (v) => (v >= 1000 ? `${virgule(v / 1000)}k` : String(Math.round(v))), couleur: "var(--bleu)" });
+  h += courbe("Heure de coucher", pt("coucher"), { ...o, fmt: (v) => { const t = Math.round(v) + 1080; return `${String(Math.floor(t / 60) % 24).padStart(2, "0")}:${String(t % 60).padStart(2, "0")}`; },
+    couleur: "var(--violet)", legende: "plus c'est plat, plus c'est régulier" });
+
+  if (S.objectifs?.length)
+    h += `<div class="carte"><b>Objectifs</b>${S.objectifs.map((x) => `<div class="objectif ${x.fait ? "fait" : ""}">${x.fait ? "✓" : "○"} ${esc(x.texte)}</div>`).join("")}</div>`;
+  h += `<p class="sous">Montre synchronisée jusqu'au ${S.montre ? jj(S.montre) : "–"}${ctx.genere ? ` · PC vu le ${jj(ctx.genere)} à ${ctx.genere.slice(11, 16)}` : ""}.
+    Repères tirés d'une montre de sport, pas un avis médical.</p>`;
   return h;
 }
 
@@ -448,6 +553,8 @@ document.addEventListener("click", (ev) => {
     memoEdite = null; sauver();
   } else if (t.dataset.onglet) {
     onglet = t.dataset.onglet; window.scrollTo(0, 0);
+  } else if (t.dataset.periode) {
+    periode = Number(t.dataset.periode); ecrire("carnet:periode", periode);
   } else if (t.dataset.douleur != null) {
     const v = Number(t.dataset.douleur);
     s.douleur = s.douleur === v ? null : v; sauver();
