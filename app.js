@@ -52,6 +52,8 @@ let doc = lire(`carnet:seance:${jour}`)?.doc || null;
 let ouvert = null;                            // exercice dont la saisie est dépliée
 let saisie = {};                              // nom → {c, r, cran} en cours de réglage
 let choisie = null;                           // [nom, index] de la série sélectionnée (pour la retirer)
+let onglet = "seance";                        // « seance » ou « progres »
+let exoGraphe = lire("carnet:exo-graphe");    // exercice tracé dans Progrès
 
 function toutesSeances() {
   // Les séances connues, la plus récente d'abord : serveur, plus celles du téléphone pas encore envoyées.
@@ -127,9 +129,12 @@ function sauver() {
   etat("attente", "à envoyer");
 }
 
+let enCours = false, relancer = false;
 async function synchroniser() {
   if (!cle) return;
-  let reste = 0;
+  if (enCours) { relancer = true; return; }   // un envoi à la fois ; celui-ci repartira à la fin
+  enCours = true;
+  let reste = 0, change = false;
   for (let i = 0; i < localStorage.length; i++) {
     const k = localStorage.key(i);
     if (!k?.startsWith("carnet:seance:")) continue;
@@ -139,13 +144,16 @@ async function synchroniser() {
       await api("carnet_ecrire", { p_jour: x.doc.jour, p_doc: x.doc });
       const actuel = lire(k);   // une série ajoutée pendant l'envoi garde la séance « à envoyer »
       if (actuel?.doc?.maj === x.doc.maj) ecrire(k, { doc: x.doc, sale: false });
-      else reste++;
+      else change = true;   // modifiée pendant l'envoi : on renvoie tout de suite, pas dans 30 s
     } catch (e) {
       reste++;
       console.warn("envoi impossible", x.doc.jour, e.message);
-      if (e.code === "28000") { etat("erreur", "clé refusée"); return; }
+      if (e.code === "28000") { etat("erreur", "clé refusée"); enCours = false; return; }
     }
   }
+  enCours = false;
+  if (change || relancer) { relancer = false; return synchroniser(); }
+  if (lire("carnet:photos", []).length) envoyerPhotos();
   if (reste) { etat("attente", navigator.onLine ? "réessai…" : "hors ligne · gardé ici"); setTimeout(synchroniser, 30000); }
   else etat("ok", "enregistré ✓");
 }
@@ -202,6 +210,8 @@ function dessiner() {
       puis scanne le QR code avec ce téléphone.</p></div>`;
     return;
   }
+  document.querySelectorAll("[data-onglet]").forEach((b) => b.classList.toggle("choisi", b.dataset.onglet === onglet));
+  if (onglet === "progres") { app.innerHTML = progres(); return; }
   const s = seanceDuJour();
   const p = prochaine();
   const c = ctx?.conseil;
@@ -246,6 +256,25 @@ function dessiner() {
   }
   h += `<button class="lien" id="ajouter">+ Ajouter un exercice</button>`;
   h += `<textarea id="note" placeholder="Note : sensations, épaule…">${esc(s.note)}</textarea>`;
+  // Épaule droite : la douleur du jour règle la réintroduction des exercices en pause.
+  const dl = s.douleur;
+  h += `<div class="carte"><b>Épaule droite</b> <span class="sous">douleur aujourd'hui, de 0 à 10</span>
+    <div class="echelle">${Array.from({ length: 11 }, (_, i) => `<button data-douleur="${i}" class="${dl === i ? "choisi" : ""}"
+      style="${dl === i ? `background:${i <= 1 ? "var(--vert)" : i <= 3 ? "var(--jaune)" : "var(--rouge)"}` : ""}">${i}</button>`).join("")}</div></div>`;
+  const pes = ctx?.pesees?.length ? ctx.pesees[ctx.pesees.length - 1] : null;
+  const vieille = !pes || (new Date(jour) - new Date(pes[0])) / 864e5 > 7;
+  h += `<div class="carte"><b>Poids</b> <span class="sous">${pes ? `dernier : ${String(pes[1]).replace(".", ",")} kg le ${jj(pes[0])}` : "aucune pesée"}
+      ${vieille && !s.poids ? ' · <span class="alerte">pesée de la semaine</span>' : ""}</span>
+    <div class="ligne2"><input id="poids" inputmode="decimal" placeholder="kg, le matin à jeun" value="${s.poids ? String(s.poids).replace(".", ",") : ""}">
+      <button data-poids-ok>OK</button></div></div>`;
+  const nPhotos = lire("carnet:photos", []).length;
+  const dp = ctx?.photo_derniere;
+  const aRefaire = !dp || (new Date(jour) - new Date(dp)) / 864e5 >= 28;
+  h += `<div class="carte"><b>Photos de suivi</b> <span class="sous">${dp ? `dernières le ${jj(dp)}` : "aucune encore"}${aRefaire ? ' · <span class="alerte">à faire</span>' : ""}
+      ${nPhotos ? ` · ${nPhotos} en attente d'envoi` : ""}</span>
+    <div class="sous" style="margin-top:6px">Lumière naturelle, même endroit, toutes les 4 semaines.</div>
+    <div class="ligne2"><button data-photo="posture-profil">Posture de profil</button><button data-photo="peau">Peau</button>
+      <button data-photo="autre">Autre</button></div></div>`;
   for (const x of ctx?.pause || []) h += `<p class="pause">⏸ ${esc(x.nom)} en pause : ${esc(x.raison)}</p>`;
   if (!ctx) h += `<p class="sous">Le PC n'a pas encore envoyé ton programme : il le fera à sa prochaine synchro.</p>`;
   app.innerHTML = h;
@@ -257,6 +286,141 @@ function formatSeries(series) {
   return out.join(", ");
 }
 
+// ───────────────────────────────────────── l'onglet Progrès
+
+// Courbe en SVG, sans bibliothèque : marche hors ligne. points : [[date ISO, valeur]].
+function courbe(titre, points, { fmt = (v) => String(Math.round(v)), refs = [], bande = null, couleur = "var(--bleu)",
+                                 jours = 90, relier = 4, bas = null, haut = null, legende = "", ajuster = false } = {}) {
+  const fin = new Date(jour);
+  let debut = new Date(fin - (jours - 1) * 864e5);
+  const pts = points.filter(([d, v]) => v != null && new Date(d) >= debut).sort((a, b) => a[0].localeCompare(b[0]));
+  // Historique court sur une fenêtre longue : l'axe part du premier point, sinon tout se tasse à droite.
+  if (ajuster && pts.length) debut = new Date(Math.max(debut, new Date(pts[0][0]) - 3 * 864e5));
+  if (!pts.length) return `<div class="carte graphe"><h4>${esc(titre)}</h4><div class="sous">pas encore de mesure sur ${jours} jours</div></div>`;
+  const vs = pts.map((p) => p[1]).concat(refs, bande || []).filter((v) => v != null);
+  let lo = bas ?? Math.min(...vs), hi = haut ?? Math.max(...vs);
+  if (hi === lo) { hi += 1; lo -= 1; }
+  const m = (hi - lo) * 0.08; lo -= bas == null ? m : 0; hi += haut == null ? m : 0;
+  const W = 340, H = 130, G = 46;
+  const X = (d) => G + (new Date(d) - debut) / ((fin - debut) || 1) * (W - G - 6);
+  const Y = (v) => 6 + (hi - v) / (hi - lo) * (H - 22);
+  let svg = `<svg viewBox="0 0 ${W} ${H}">`;
+  if (bande) svg += `<rect x="${G}" y="${Y(bande[1])}" width="${W - G - 6}" height="${Y(bande[0]) - Y(bande[1])}" fill="rgba(48,209,88,.12)"/>`;
+  for (const r of refs) svg += `<line x1="${G}" x2="${W - 6}" y1="${Y(r)}" y2="${Y(r)}" stroke="var(--jaune)" stroke-dasharray="4 4" stroke-width="1"/>`;
+  for (const v of [hi - m, (hi + lo) / 2, lo + m])
+    svg += `<text x="${G - 4}" y="${Y(v) + 4}" fill="var(--doux)" font-size="10" text-anchor="end">${esc(fmt(v))}</text>`;
+  svg += `<line x1="${G}" x2="${G}" y1="4" y2="${H - 16}" stroke="var(--ligne)"/>`;
+  let chemin = "", prec = null;
+  for (const [d, v] of pts) {
+    const ecart = prec ? (new Date(d) - new Date(prec)) / 864e5 : 0;
+    chemin += `${!prec || ecart > relier ? "M" : "L"}${X(d).toFixed(1)},${Y(v).toFixed(1)} `;
+    prec = d;
+  }
+  svg += `<path d="${chemin}" fill="none" stroke="${couleur}" stroke-width="2" stroke-linejoin="round"/>`;
+  for (const [d, v] of pts) svg += `<circle cx="${X(d).toFixed(1)}" cy="${Y(v).toFixed(1)}" r="${pts.length > 40 ? 1.5 : 2.5}" fill="${couleur}"/>`;
+  svg += `<text x="${G}" y="${H - 3}" fill="var(--doux)" font-size="10">${jj(debut.toISOString())}</text>`;
+  svg += `<text x="${W - 6}" y="${H - 3}" fill="var(--doux)" font-size="10" text-anchor="end">${jj(jour)}</text></svg>`;
+  const vals = pts.map((p) => p[1]);
+  const moy = vals.reduce((a, b) => a + b, 0) / vals.length;
+  return `<div class="carte graphe"><h4>${esc(titre)}</h4>${svg}<div class="chiffres">dernière ${esc(fmt(vals[vals.length - 1]))}
+    · moyenne ${esc(fmt(moy))} · ${vals.length} mesure${vals.length > 1 ? "s" : ""}${legende ? ` · ${esc(legende)}` : ""}</div></div>`;
+}
+
+function barresSemaines(semaines) {
+  const W = 340, H = 110, hi = Math.max(1, ...semaines.map((s) => s[1])), lb = (W - 10) / semaines.length;
+  let svg = `<svg viewBox="0 0 ${W} ${H}">`;
+  semaines.forEach(([d, n], i) => {
+    const h = n / hi * (H - 30);
+    svg += `<rect x="${(5 + i * lb + 2).toFixed(1)}" y="${(H - 18 - h).toFixed(1)}" width="${(lb - 4).toFixed(1)}" height="${h.toFixed(1)}" rx="3" fill="var(--bleu)"/>`;
+    if (n) svg += `<text x="${(5 + i * lb + lb / 2).toFixed(1)}" y="${(H - 21 - h).toFixed(1)}" fill="var(--texte)" font-size="10" text-anchor="middle">${n}</text>`;
+    if (i % 2 === semaines.length % 2 || semaines.length < 8)
+      svg += `<text x="${(5 + i * lb + lb / 2).toFixed(1)}" y="${H - 4}" fill="var(--doux)" font-size="9" text-anchor="middle">${jj(d)}</text>`;
+  });
+  return svg + "</svg>";
+}
+
+function muscuParJour() {
+  // Le calendrier du PC, plus les séances du téléphone (plus récentes que sa dernière synchro).
+  const out = { ...(ctx?.muscu_jours || {}) };
+  for (const s of toutesSeances()) {
+    const n = (s.exos || []).reduce((a, e) => a + (e.series?.length || 0), 0);
+    if (n) out[s.jour] = { type: s.type, series: n };
+  }
+  return out;
+}
+
+function progres() {
+  const mj = muscuParJour();
+  const courses = new Set((ctx?.courses || []).map((c) => c[0]));
+  // Calendrier : 18 semaines, du lundi au dimanche, une colonne par semaine.
+  const fin = new Date(jour);
+  const lundi = new Date(fin - ((fin.getDay() + 6) % 7) * 864e5);
+  const debut = new Date(lundi - 17 * 7 * 864e5);
+  let cases = "";
+  for (let d = new Date(debut); d <= new Date(lundi.getTime() + 6 * 864e5); d = new Date(d.getTime() + 864e5)) {
+    const iso = d.toISOString().slice(0, 10);
+    const t = mj[iso]?.type || (courses.has(iso) ? "course" : "");
+    cases += `<span class="${t} ${iso === jour ? "auj" : ""}" title="${iso}"></span>`;
+  }
+  const n30 = Object.keys(mj).filter((d) => (fin - new Date(d)) / 864e5 < 30).length;
+  const legs = Object.entries(mj).filter(([, x]) => x.type === "legs").map(([d]) => d).sort();
+  let h = `<div class="carte"><b>Régularité</b> <span class="sous">${n30} séances sur 30 jours${legs.length ? ` · jambes il y a ${Math.round((fin - new Date(legs[legs.length - 1])) / 864e5)} j` : ""}</span>
+    <div class="cal" style="margin-top:10px">${cases}</div>
+    <div class="legende"><span><i style="background:var(--bleu)"></i>push</span><span><i style="background:var(--violet)"></i>pull</span>
+      <span><i style="background:var(--vert)"></i>legs</span><span><i style="background:var(--jaune)"></i>course</span><span><i style="background:var(--doux)"></i>autre</span></div></div>`;
+
+  // Séries par semaine, 12 semaines.
+  const sem = [];
+  for (let k = 11; k >= 0; k--) {
+    const de = new Date(lundi - k * 7 * 864e5), a = new Date(de.getTime() + 7 * 864e5);
+    const n = Object.entries(mj).filter(([d]) => new Date(d) >= de && new Date(d) < a).reduce((s, [, x]) => s + x.series, 0);
+    sem.push([de.toISOString().slice(0, 10), n]);
+  }
+  h += `<div class="carte graphe"><h4>Séries par semaine</h4>${barresSemaines(sem)}</div>`;
+
+  // Un exercice : 1RM estimé et charge la plus haute de chaque séance.
+  const prog = { ...(ctx?.progres || {}) };
+  for (const s of toutesSeances()) for (const e of s.exos || []) {
+    if (!e.series?.length) continue;
+    const top = Math.max(...e.series.map((x) => x.c ?? 0));
+    const best = Math.max(...e.series.map((x) => (x.c > 0 && x.r <= 12 ? x.c * (1 + x.r / 30) : 0)));
+    const l = (prog[e.nom] = (prog[e.nom] || []).filter((p) => p[0] !== s.jour));
+    l.push([s.jour, top, Math.round(best * 10) / 10]);
+  }
+  const noms = Object.keys(prog).sort((a, b) => prog[b].length - prog[a].length);
+  if (noms.length) {
+    if (!noms.includes(exoGraphe)) exoGraphe = noms[0];
+    const serie = prog[exoGraphe].slice().sort((a, b) => a[0].localeCompare(b[0]));
+    h += `<div class="carte graphe"><select id="choix-exo">${noms.map((n) => `<option ${n === exoGraphe ? "selected" : ""}>${esc(n)}</option>`).join("")}</select></div>`;
+    h += courbe(`${exoGraphe} — 1RM estimé`, serie.map((p) => [p[0], p[2] || null]), { jours: 365, relier: 30, couleur: "var(--violet)", ajuster: true,
+      fmt: (v) => `${Math.round(v)} kg`, legende: "d'après la meilleure série" });
+    h += courbe(`${exoGraphe} — charge la plus haute`, serie.map((p) => [p[0], p[1]]), { jours: 365, relier: 30, ajuster: true,
+      fmt: (v) => `${String(Math.round(v * 2) / 2).replace(".", ",")} kg` });
+  } else h += `<div class="carte sous">Les courbes de chaque exercice apparaîtront après tes premières séances.</div>`;
+
+  // Corps et récupération (résumés journaliers poussés par le PC).
+  const J = ctx?.jours || [];
+  const pt = (cle) => J.map((x) => [x.j, x[cle]]);
+  const dern = J.filter((x) => x.vfc_bas).pop();
+  const douleurs = (ctx?.douleurs || []).slice();
+  for (const s of toutesSeances()) if (s.douleur != null) { const i = douleurs.findIndex((x) => x[0] === s.jour); if (i >= 0) douleurs.splice(i, 1); douleurs.push([s.jour, s.douleur]); }
+  const pesees = (ctx?.pesees || []).slice();
+  for (const s of toutesSeances()) if (s.poids) { const i = pesees.findIndex((x) => x[0] === s.jour); if (i >= 0) pesees.splice(i, 1); pesees.push([s.jour, s.poids]); }
+  h += courbe("Douleur à l'épaule", douleurs, { bas: 0, haut: 10, refs: [2], relier: 14, couleur: "var(--rouge)", jours: 120, legende: "sous 2 : on peut remonter" });
+  h += courbe("Poids", pesees, { relier: 60, jours: 180, fmt: (v) => `${String(Math.round(v * 10) / 10).replace(".", ",")}` });
+  const cible = ctx?.cibles?.sommeil;
+  h += courbe("Sommeil", pt("sommeil"), { refs: cible ? [cible] : [], fmt: (v) => `${Math.floor(v / 60)}h${String(Math.round(v % 60)).padStart(2, "0")}` });
+  h += courbe("VFC (nuit)", pt("vfc"), { bande: dern ? [dern.vfc_bas, dern.vfc_haut] : null, couleur: "var(--vert)", legende: "ms, bande verte : ton habituel" });
+  h += courbe("FC au repos", pt("fc"), { couleur: "var(--rouge)", legende: "bpm" });
+  h += courbe("Heure de coucher", pt("coucher"), { fmt: (v) => { const t = Math.round(v) + 1080; return `${String(Math.floor(t / 60) % 24).padStart(2, "0")}:${String(t % 60).padStart(2, "0")}`; },
+    couleur: "var(--violet)", legende: "plus c'est plat, plus c'est régulier" });
+  const cr = (ctx?.courses || []).map((c) => [c[0], c[2] / c[1]]);
+  if (cr.length) h += courbe("Course — allure", cr, { jours: 365, relier: 30, couleur: "var(--jaune)", ajuster: true,
+    fmt: (v) => `${Math.floor(v)}'${String(Math.round((v % 1) * 60)).padStart(2, "0")}`, legende: "min/km, plus bas = plus rapide" });
+  if (ctx?.genere) h += `<p class="sous">Données du PC du ${jj(ctx.genere)} à ${ctx.genere.slice(11, 16)}.</p>`;
+  return h;
+}
+
 // ───────────────────────────────────────── les gestes
 
 document.addEventListener("click", (ev) => {
@@ -265,7 +429,19 @@ document.addEventListener("click", (ev) => {
   const carte = t.closest("[data-exo]");
   const nom = carte?.dataset.exo;
   const s = seanceDuJour();
-  if (t.dataset.type) {
+  if (t.dataset.onglet) {
+    onglet = t.dataset.onglet; window.scrollTo(0, 0);
+  } else if (t.dataset.douleur != null) {
+    const v = Number(t.dataset.douleur);
+    s.douleur = s.douleur === v ? null : v; sauver();
+  } else if (t.hasAttribute("data-poids-ok")) {
+    const v = parseFloat(($("#poids").value || "").replace(",", "."));
+    if (v > 30 && v < 250) { s.poids = v; sauver(); } else { s.poids = null; sauver(); }
+  } else if (t.dataset.photo) {
+    genrePhoto = t.dataset.photo; $("#fichier-photo").click(); return;
+  } else if (t.dataset.exoGraphe != null) {
+    return;
+  } else if (t.dataset.type) {
     s.type = t.dataset.type; ouvert = null; choisie = null; sauver();
   } else if (t.dataset.ouvrir != null) {
     ouvert = ouvert === nom ? null : nom; choisie = null;
@@ -301,6 +477,54 @@ document.addEventListener("click", (ev) => {
   } else return;
   dessiner();
 });
+
+document.addEventListener("change", (ev) => {
+  if (ev.target.id === "choix-exo") { exoGraphe = ev.target.value; ecrire("carnet:exo-graphe", exoGraphe); dessiner(); }
+});
+
+// ───────────────────────────────────────── photos de suivi
+
+// Redimensionnées sur le téléphone (1280 px, JPEG) : une photo de 4 Mo en fait ~200 ko. Gardées
+// ici jusqu'à l'envoi ; la base n'est qu'un transit, le PC les range puis les efface.
+let genrePhoto = "autre";
+$("#fichier-photo").addEventListener("change", async (ev) => {
+  const fichier = ev.target.files?.[0];
+  ev.target.value = "";
+  if (!fichier) return;
+  try {
+    const img = await createImageBitmap(fichier);
+    const k = Math.min(1, 1280 / Math.max(img.width, img.height));
+    const cv = document.createElement("canvas");
+    cv.width = Math.round(img.width * k); cv.height = Math.round(img.height * k);
+    cv.getContext("2d").drawImage(img, 0, 0, cv.width, cv.height);
+    const donnees = cv.toDataURL("image/jpeg", 0.82);
+    const file = lire("carnet:photos", []);
+    file.push({ jour, genre: genrePhoto, donnees });
+    ecrire("carnet:photos", file);
+    if (lire("carnet:photos", []).length !== file.length) throw new Error("mémoire du navigateur pleine");
+    etat("attente", "photo à envoyer");
+    dessiner();
+    envoyerPhotos();
+  } catch (e) {
+    etat("erreur", `photo : ${e.message}`);
+  }
+});
+
+async function envoyerPhotos() {
+  let file = lire("carnet:photos", []);
+  while (file.length) {
+    const p = file[0];
+    try {
+      await api("carnet_photo_deposer", { p_jour: p.jour, p_genre: p.genre, p_donnees: p.donnees });
+    } catch (e) {
+      etat("attente", "photo gardée ici, envoi plus tard");
+      return;
+    }
+    file = lire("carnet:photos", []).slice(1);
+    ecrire("carnet:photos", file);
+  }
+  dessiner();
+}
 
 document.addEventListener("input", (ev) => {
   if (ev.target.id === "note") { seanceDuJour().note = ev.target.value; sauver(); }

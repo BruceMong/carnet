@@ -75,6 +75,29 @@
     border-bottom: 1px solid var(--ligne); color: var(--texte); padding: 12px 4px; font-size: 16px; }
   .choix button span { color: var(--doux); font-size: 13px; }
   .accueil { text-align: center; margin-top: 30vh; color: var(--doux); }
+  .onglets { display: flex; gap: 6px; background: var(--carte); border-radius: 12px; padding: 4px; margin: 4px 0 8px; }
+  .onglets button { flex: 1; border: 0; background: none; color: var(--doux); padding: 8px 0; border-radius: 9px; font-size: 15px; }
+  .onglets button.choisi { background: var(--carte2); color: var(--texte); font-weight: 600; }
+  .echelle { display: grid; grid-template-columns: repeat(11, 1fr); gap: 4px; margin-top: 8px; }
+  .echelle button { height: 38px; border: 0; border-radius: 8px; background: var(--carte2); color: var(--texte); font-size: 15px; padding: 0; }
+  .echelle button.choisi { color: #000; font-weight: 700; }
+  .ligne2 { display: flex; gap: 8px; align-items: center; margin-top: 8px; }
+  .ligne2 input { flex: 1; height: 44px; border-radius: 10px; border: 1px solid var(--ligne); background: var(--bg);
+    color: var(--texte); font-size: 18px; padding: 0 10px; }
+  .ligne2 button, .petit { height: 44px; border: 0; border-radius: 10px; background: var(--carte2); color: var(--texte);
+    font-size: 15px; padding: 0 14px; }
+  .graphe svg { width: 100%; height: auto; display: block; }
+  .graphe h4 { margin: 0 0 2px; font-size: 15px; }
+  .graphe .chiffres { color: var(--doux); font-size: 13px; margin-top: 2px; }
+  select { width: 100%; height: 42px; border-radius: 10px; border: 1px solid var(--ligne); background: var(--bg);
+    color: var(--texte); font-size: 15px; padding: 0 8px; margin-bottom: 6px; }
+  .cal { display: grid; grid-auto-flow: column; grid-template-rows: repeat(7, 1fr); gap: 3px; }
+  .cal span { aspect-ratio: 1; border-radius: 3px; background: var(--carte2); }
+  .cal span.push { background: var(--bleu); } .cal span.pull { background: var(--violet); }
+  .cal span.legs { background: var(--vert); } .cal span.autre { background: var(--doux); }
+  .cal span.course { background: var(--jaune); } .cal span.auj { outline: 2px solid var(--texte); }
+  .legende { display: flex; flex-wrap: wrap; gap: 10px; font-size: 13px; color: var(--doux); margin-top: 8px; }
+  .legende i { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 4px; vertical-align: -1px; }
 </style>
 </head>
 <body>
@@ -82,7 +105,9 @@
   <h1 id="titre">Carnet</h1>
   <span id="etat" class="etat"></span>
 </header>
+<div class="onglets"><button data-onglet="seance" class="choisi">Séance</button><button data-onglet="progres">Progrès</button></div>
 <main id="app"></main>
+<input type="file" id="fichier-photo" accept="image/*" capture="environment" hidden>
 <div class="repos" id="repos">
   <div><div class="sous">Repos</div><div class="chrono" id="chrono">1:30</div></div>
   <div><button data-repos="-15">−15</button> <button data-repos="15">+15</button> <button data-repos="0">✕</button></div>
