@@ -559,9 +559,12 @@ function ouvrirAjout() {
   const dlg = $("#ajout"), champ = $("#cherche");
   const rendu = () => {
     const q = champ.value.trim().toLowerCase();
-    const liste = (ctx?.exercices || []).filter((x) => !q || x.nom.toLowerCase().includes(q)
-      || (x.groupe || "").includes(q));
-    $("#choix").innerHTML = liste.map((x) => `<button data-choix="${esc(x.nom)}">${esc(x.nom)} <span>${esc(x.groupe)}</span></button>`).join("")
+    // Nom, alias (« pec fly » → Écarté machine) ou groupe, sans tenir compte des accents.
+    const plat = (s) => (s || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+    const qp = plat(q);
+    const liste = (ctx?.exercices || []).filter((x) => !q || plat(x.nom).includes(qp)
+      || plat(x.alias).includes(qp) || plat(x.groupe).includes(qp));
+    $("#choix").innerHTML = liste.map((x) => `<button data-choix="${esc(x.nom)}">${esc(x.nom)} <span>${esc(x.groupe)}${x.alias ? ` · ${esc(x.alias)}` : ""}</span></button>`).join("")
       + (q && !liste.some((x) => x.nom.toLowerCase() === q) ? `<button data-choix="${esc(champ.value.trim())}">+ « ${esc(champ.value.trim())} »</button>` : "");
   };
   champ.value = ""; rendu(); champ.oninput = rendu;
