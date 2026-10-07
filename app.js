@@ -262,7 +262,6 @@ function dessiner() {
       </div></div>`;
   }
   h += `<button class="lien" id="ajouter">+ Ajouter un exercice</button>`;
-  h += `<textarea id="note" placeholder="Note : sensations, épaule…">${esc(s.note)}</textarea>`;
   // Épaule droite : la douleur du jour règle la réintroduction des exercices en pause.
   const dl = s.douleur;
   h += `<div class="carte"><b>Épaule droite</b> <span class="sous">douleur aujourd'hui, de 0 à 10</span>
@@ -282,6 +281,9 @@ function dessiner() {
     <div class="sous" style="margin-top:6px">Lumière naturelle, même endroit, toutes les 4 semaines.</div>
     <div class="ligne2"><button data-photo="posture-profil">Posture de profil</button><button data-photo="peau">Peau</button>
       <button data-photo="autre">Autre</button></div></div>`;
+  // La note générale, tout en bas : bilan de la séance, que Claude relit (seances.md, ligne « > »).
+  h += `<div class="carte"><b>Note de séance</b> <span class="sous">ce que Claude relira pour tes bilans</span>
+    <textarea id="note" style="margin-top:8px" placeholder="Comment ça s'est passé : forme, sensations, épaule, ce qui a coincé…">${esc(s.note)}</textarea></div>`;
   for (const x of ctx?.pause || []) h += `<p class="pause">⏸ ${esc(x.nom)} en pause : ${esc(x.raison)}</p>`;
   if (!ctx) h += `<p class="sous">Le PC n'a pas encore envoyé ton programme : il le fera à sa prochaine synchro.</p>`;
   app.innerHTML = h;
