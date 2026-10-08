@@ -446,6 +446,53 @@ function jauge(titre, fait, cible, texte) {
     <div class="j-barre"><i style="width:${(k * 100).toFixed(0)}%;background:${k >= 1 ? "var(--vert)" : "var(--bleu)"}"></i></div></div>`;
 }
 
+// Les gestes du téléphone (ressenti, routine, note du jour, objectifs) partent avec la séance du jour,
+// datés : le PC les écrit dans journal.md et objectifs.md comme le panneau, une fois chacun. Ici, un
+// geste prime sur l'état du PC tant que celui-ci ne l'a pas appliqué (ctx.sante.gestes).
+const maintenant = () => { const d = new Date(); d.setMinutes(d.getMinutes() - d.getTimezoneOffset()); return d.toISOString().slice(0, 23); };
+
+function geste(champ, cle, v) {
+  const s = seanceDuJour();
+  s[champ] = { ...(s[champ] || {}), [cle]: { v, t: maintenant() } };
+  sauver();
+}
+
+function etatGeste(champ, cle, base) {
+  const g = doc?.[champ]?.[cle];
+  const vu = ctx?.sante?.jour === jour ? ctx.sante.gestes?.[champ === "objectifs" ? `objectif:${cle}` : cle] : null;
+  return g && (!vu || g.t > vu) ? g.v : base;
+}
+
+function journalDuJour() {
+  // Ce que le PC sait de la ligne du jour de journal.md, recouvert par les gestes pas encore appliqués.
+  const S = ctx?.sante, base = S?.jour === jour ? S.journal : {};
+  const j = { Fait: {} };
+  for (const k of ["Énergie", "Humeur", "Peau"]) j[k] = etatGeste("journal", k, base?.[k] ?? null);
+  j.Note = etatGeste("journal", "Note", base?.Note || "");
+  for (const r of S?.routine || []) j.Fait[r.cle] = etatGeste("journal", `Fait:${r.cle}`, (base?.Fait || []).includes(r.cle));
+  return j;
+}
+
+function aujourdhuiSante() {
+  const S = ctx?.sante, j = journalDuJour();
+  const routine = S?.routine || [];
+  const ton = (v) => (v >= 4 ? "var(--vert)" : v === 3 ? "var(--jaune)" : "var(--rouge)");
+  let h = `<div class="carte"><b>Ressenti du jour</b> <span class="sous">de 1 à 5, 5 = au mieux</span><div class="notes">`;
+  for (const k of ["Énergie", "Humeur", "Peau"])
+    h += `<span class="r-nom">${k}</span><span class="cinq">${[1, 2, 3, 4, 5].map((n) => `<button data-ressenti="${k}" data-n="${n}"
+      class="${j[k] === n ? "choisi" : ""}" style="${j[k] === n ? `background:${ton(n)}` : ""}">${n}</button>`).join("")}</span>`;
+  h += `</div><textarea id="note-jour" placeholder="Note du jour : sommeil, forme, ce qui a compté…">${esc(j.Note)}</textarea></div>`;
+  if (routine.length) {
+    const n = routine.filter((r) => j.Fait[r.cle] || r.auto).length;
+    h += `<div class="carte"><b>Routine du jour</b> <span class="sous">${n}/${routine.length}</span>`
+      + routine.map((r) => { const ok = j.Fait[r.cle] || r.auto;
+        return `<button class="case ${ok ? "faite" : ""}" data-routine="${esc(r.cle)}" ${r.auto ? "disabled" : ""}><i>${ok ? "✓" : ""}</i>
+          <span><b>${esc(r.titre)}</b>${r.detail ? `<span class="sous">${esc(r.detail)}</span>` : ""}</span></button>`; }).join("")
+      + `</div>`;
+  }
+  return h;
+}
+
 function sante() {
   const S = ctx?.sante;
   if (!S) return `<div class="carte sous">Le PC n'a pas encore envoyé tes données de santé : il le fera à sa prochaine synchro.</div>`;
@@ -454,6 +501,7 @@ function sante() {
   let h = "";
 
   for (const a of S.alertes || []) h += `<div class="carte alerte-carte">${esc(a)}</div>`;
+  h += aujourdhuiSante();
 
   // La dernière nuit connue : durée face à la cible, horaires, phases.
   const n = dernier("sommeil");
@@ -528,8 +576,12 @@ function sante() {
   h += courbe("Heure de coucher", pt("coucher"), { ...o, fmt: (v) => { const t = Math.round(v) + 1080; return `${String(Math.floor(t / 60) % 24).padStart(2, "0")}:${String(t % 60).padStart(2, "0")}`; },
     couleur: "var(--violet)", legende: "plus c'est plat, plus c'est régulier" });
 
-  if (S.objectifs?.length)
-    h += `<div class="carte"><b>Objectifs</b>${S.objectifs.map((x) => `<div class="objectif ${x.fait ? "fait" : ""}">${x.fait ? "✓" : "○"} ${esc(x.texte)}</div>`).join("")}</div>`;
+  if (S.objectifs?.length) {
+    const obj = S.objectifs.map((x) => ({ ...x, ok: etatGeste("objectifs", x.texte, x.fait) }));
+    h += `<div class="carte"><b>Objectifs</b> <span class="sous">${obj.filter((x) => x.ok).length}/${obj.length}</span>`
+      + obj.map((x) => `<button class="case ${x.ok ? "faite" : ""}" data-objectif="${esc(x.texte)}"><i>${x.ok ? "✓" : ""}</i>
+        <span><b>${esc(x.texte)}</b>${x.ok && x.le ? `<span class="sous">atteint le ${esc(x.le)}</span>` : ""}</span></button>`).join("") + `</div>`;
+  }
   h += `<p class="sous">Montre synchronisée jusqu'au ${S.montre ? jj(S.montre) : "–"}${ctx.genere ? ` · PC vu le ${jj(ctx.genere)} à ${ctx.genere.slice(11, 16)}` : ""}.
     Repères tirés d'une montre de sport, pas un avis médical.</p>`;
   return h;
@@ -553,6 +605,14 @@ document.addEventListener("click", (ev) => {
     memoEdite = null; sauver();
   } else if (t.dataset.onglet) {
     onglet = t.dataset.onglet; window.scrollTo(0, 0);
+  } else if (t.dataset.ressenti) {
+    const k = t.dataset.ressenti, n = Number(t.dataset.n);
+    geste("journal", k, journalDuJour()[k] === n ? null : n);   // retoucher la même note l'efface, comme au panneau
+  } else if (t.dataset.routine) {
+    geste("journal", `Fait:${t.dataset.routine}`, !journalDuJour().Fait[t.dataset.routine]);
+  } else if (t.dataset.objectif) {
+    const x = ctx?.sante?.objectifs?.find((o) => o.texte === t.dataset.objectif);
+    if (x) geste("objectifs", x.texte, !etatGeste("objectifs", x.texte, x.fait));
   } else if (t.dataset.periode) {
     periode = Number(t.dataset.periode); ecrire("carnet:periode", periode);
   } else if (t.dataset.douleur != null) {
@@ -653,6 +713,7 @@ async function envoyerPhotos() {
 
 document.addEventListener("input", (ev) => {
   if (ev.target.id === "note") { seanceDuJour().note = ev.target.value; sauver(); }
+  if (ev.target.id === "note-jour") geste("journal", "Note", ev.target.value);
   if (ev.target.hasAttribute("data-note-exo")) {
     const nom = ev.target.closest("[data-exo]").dataset.exo, s = seanceDuJour();
     let e = s.exos.find((x) => x.nom === nom);

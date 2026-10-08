@@ -146,6 +146,20 @@
   .objectif { padding: 8px 0; border-bottom: 1px solid var(--ligne); font-size: 15px; }
   .objectif:last-child { border-bottom: 0; }
   .objectif.fait { color: var(--vert); }
+  .notes { display: grid; grid-template-columns: auto 1fr; gap: 8px 12px; align-items: center; margin: 10px 0; }
+  .cinq { display: grid; grid-template-columns: repeat(5, 1fr); gap: 6px; }
+  .cinq button { height: 40px; border: 0; border-radius: 9px; background: var(--carte2); color: var(--texte); font-size: 16px; padding: 0; }
+  .cinq button.choisi { color: #000; font-weight: 700; }
+  .case { display: flex; gap: 12px; align-items: flex-start; width: 100%; text-align: left; background: none; border: 0;
+    border-bottom: 1px solid var(--ligne); color: var(--texte); padding: 11px 0; font-size: 15px; }
+  .case:last-child { border-bottom: 0; }
+  .case > i { flex: none; width: 24px; height: 24px; border-radius: 7px; border: 2px solid var(--ligne); font-style: normal;
+    display: grid; place-items: center; font-size: 14px; font-weight: 700; color: #000; margin-top: -1px; }
+  .case.faite > i { background: var(--vert); border-color: var(--vert); }
+  .case.faite b { color: var(--doux); font-weight: 400; text-decoration: line-through; }
+  .case b { font-weight: 500; display: block; }
+  .case .sous { display: block; font-size: 13px; margin-top: 2px; }
+  .case:disabled { opacity: 1; }
 </style>
 </head>
 <body>

@@ -18,6 +18,10 @@ service worker) pour noter ses séries au téléphone, à la salle, même sans r
   (durée, horaires, phases, score), VFC, FC au repos, Body Battery, stress, SpO2, respiration, semaine en
   cours (pas, séances, minutes intensives), dette et régularité du sommeil, ressenti noté, objectifs, et
   les courbes sur 30 ou 90 jours (poids, sommeil, VFC, FC, Body Battery, stress, pas, coucher).
+- **Ce que le panneau Santé permet de noter, au téléphone aussi** (onglet Santé) : ressenti du jour
+  (énergie, humeur, peau), note du jour, routine du jour, objectifs sportifs. Chaque geste part daté avec
+  la séance du jour ; le PC l'écrit dans journal.md ou objectifs.md comme le panneau, une seule fois, et
+  un geste plus ancien que le dernier appliqué pour la même case est ignoré.
 - **Progrès** : calendrier des séances, séries par semaine, courbe de chaque exercice (1RM estimé,
   charge), douleur à l'épaule, allure de course.
 - Les courbes sont en SVG écrit à la main, sans bibliothèque, pour marcher hors ligne.

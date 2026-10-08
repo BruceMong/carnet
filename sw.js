@@ -1,6 +1,6 @@
 // Hors ligne : l'appli elle-même vient du cache (la salle capte mal), les appels à la base
 // passent toujours par le réseau — les séances en attente sont gardées par app.js.
-const VERSION = "carnet-v8";
+const VERSION = "carnet-v9";
 const FICHIERS = ["./", "index.html", "app.js", "manifest.webmanifest", "icon.svg", "icon-192.png", "icon-512.png"];
 
 self.addEventListener("install", (e) => {
