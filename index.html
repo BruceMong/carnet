@@ -160,6 +160,19 @@
   .case b { font-weight: 500; display: block; }
   .case .sous { display: block; font-size: 13px; margin-top: 2px; }
   .case:disabled { opacity: 1; }
+  /* Fiche d'exercice : le « i » à côté du nom, la bulle qui s'ouvre */
+  .exo h3 .nom { display: flex; align-items: center; gap: 8px; min-width: 0; }
+  .info { flex: none; width: 22px; height: 22px; border-radius: 50%; border: 1px solid var(--doux); background: none;
+    color: var(--doux); font: italic 600 13px/1 Georgia, serif; padding: 0; }
+  #fiche { padding: 12px; }
+  .f-images { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+  .f-images figure { margin: 0; }
+  .f-images img { width: 100%; aspect-ratio: 4 / 3; object-fit: cover; border-radius: 10px; display: block; background: var(--carte2); }
+  .f-images figcaption { font-size: 12px; color: var(--doux); text-align: center; margin-top: 2px; }
+  #fiche h2 { font-size: 20px; margin: 12px 0 0; }
+  .f-en { color: var(--bleu); font-size: 15px; font-style: italic; }
+  #fiche ol { margin: 10px 0 6px; padding-left: 20px; font-size: 15px; }
+  #fiche ol li { margin-bottom: 4px; }
 </style>
 </head>
 <body>
@@ -180,6 +193,10 @@
   <input id="cherche" placeholder="Exercice…" autocomplete="off">
   <div class="choix" id="choix"></div>
   <button class="lien" id="fermer-ajout">Annuler</button>
+</dialog>
+<dialog id="fiche">
+  <div id="fiche-contenu"></div>
+  <button class="lien" id="fermer-fiche">Fermer</button>
 </dialog>
 <script type="module" src="app.js"></script>
 </body>

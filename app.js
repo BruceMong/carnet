@@ -9,6 +9,8 @@
 // Hors ligne d'abord : chaque série est gardée sur le téléphone avant d'être envoyée, et renvoyée
 // dès que le réseau revient. Une séance = un document par jour, réécrit en entier.
 
+import { FICHES } from "./fiches.js";
+
 const URL_API = "https://vesdcipjplvgdwfsvefq.supabase.co/rest/v1/rpc/";
 const PUBLIQUE = "sb_publishable_6sYHfOdCG9m-xAkfm8Zcwg_7F4ZKu2c";
 const TYPES = ["push", "pull", "legs", "autre"];
@@ -241,7 +243,7 @@ function dessiner() {
       r: faites.length ? faites[faites.length - 1].r : (ci?.r ?? ctx?.schema?.reps ?? 8),
     });
     h += `<div class="carte exo ${ouvert === nom ? "ouvert" : ""} ${faites.length >= n ? "fait" : ""}" data-exo="${esc(nom)}">
-      <h3 data-ouvrir="${esc(nom)}">${esc(nom)}<span class="n">${faites.length}/${n}</span></h3>`;
+      <h3 data-ouvrir="${esc(nom)}"><span class="nom">${esc(nom)}${FICHES[nom] ? `<button class="info" data-fiche="${esc(nom)}" aria-label="Fiche de l'exercice">i</button>` : ""}</span><span class="n">${faites.length}/${n}</span></h3>`;
     if (der) h += `<div class="sous">${jj(der.jour)} : ${esc(formatSeries(der.series))}</div>`;
     else h += `<div class="sous">pas encore d'historique</div>`;
     const mm = memo(nom);
@@ -595,7 +597,9 @@ document.addEventListener("click", (ev) => {
   const carte = t.closest("[data-exo]");
   const nom = carte?.dataset.exo;
   const s = seanceDuJour();
-  if (t.closest("[data-memo]")) {
+  if (t.dataset.fiche) {
+    ouvrirFiche(t.dataset.fiche); return;
+  } else if (t.closest("[data-memo]")) {
     memoEdite = t.closest("[data-memo]").dataset.memo;
     dessiner(); setTimeout(() => $("#memo-champ")?.focus(), 0); return;
   } else if (t.hasAttribute("data-memo-ok")) {
@@ -723,6 +727,20 @@ document.addEventListener("input", (ev) => {
   }
 
 });
+
+// Fiche d'un exercice : la machine en photo (départ, arrivée), son nom anglais pour la reconnaître
+// ou demander à la salle, les muscles, trois consignes, l'erreur à éviter, et le mémo de réglage.
+function ouvrirFiche(nom) {
+  const f = FICHES[nom], mm = memo(nom);
+  $("#fiche-contenu").innerHTML = `<div class="f-images">${[0, 1].map((i) => `<figure><img src="fiches/${f.img}-${i}.jpg" alt="" loading="lazy"><figcaption>${i ? "arrivée" : "départ"}</figcaption></figure>`).join("")}</div>
+    <h2>${esc(nom)}</h2><div class="f-en">${esc(f.en)}</div>
+    <div class="sous">${esc(f.muscles)}</div>
+    ${mm ? `<div class="memo">📌 ${esc(mm)}</div>` : ""}
+    <ol>${f.consignes.map((c) => `<li>${esc(c)}</li>`).join("")}</ol>
+    <div class="remarque">✕ ${esc(f.erreur)}</div>`;
+  $("#fiche").showModal();
+}
+$("#fiche").addEventListener("click", (ev) => { if (ev.target.id === "fiche" || ev.target.id === "fermer-fiche") $("#fiche").close(); });
 
 // Ajouter un exercice hors programme : la liste du PC, ou un nom libre (le PC le signalera).
 function ouvrirAjout() {

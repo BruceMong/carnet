@@ -22,6 +22,10 @@ service worker) pour noter ses séries au téléphone, à la salle, même sans r
   (énergie, humeur, peau), note du jour, routine du jour, objectifs sportifs. Chaque geste part daté avec
   la séance du jour ; le PC l'écrit dans journal.md ou objectifs.md comme le panneau, une seule fois, et
   un geste plus ancien que le dernier appliqué pour la même case est ignoré.
+- **Fiches d'exercice** : le « i » à côté du nom ouvre la machine en photo (départ, arrivée), son nom
+  anglais, les muscles, trois consignes, l'erreur à éviter et le mémo de réglage. Textes dans `fiches.js`
+  (clé = nom exact de `sante/sport/exercices.md`), photos de free-exercise-db (domaine public) dans
+  `fiches/`, mises en cache à l'installation pour marcher sans réseau.
 - **Progrès** : calendrier des séances, séries par semaine, courbe de chaque exercice (1RM estimé,
   charge), douleur à l'épaule, allure de course.
 - Les courbes sont en SVG écrit à la main, sans bibliothèque, pour marcher hors ligne.
