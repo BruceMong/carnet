@@ -26,6 +26,19 @@ service worker) pour noter ses séries au téléphone, à la salle, même sans r
   anglais, les muscles, trois consignes, l'erreur à éviter et le mémo de réglage. Textes dans `fiches.js`
   (clé = nom exact de `sante/sport/exercices.md`), photos de free-exercise-db (domaine public) dans
   `fiches/`, mises en cache à l'installation pour marcher sans réseau.
+- **Pendant la séance** : avancement (séries faites sur prévues, durée), séries restantes en pointillé à la
+  charge prévue, étiquettes du muscle (avec sa fatigue) et du record. Sous le minuteur de repos, « Il en restait
+  combien ? » (0 à 4+, facultatif) : la réserve est écrite `@N` dans seances.md. L'écran clignote à la fin du
+  repos. Glisser une série vers la gauche la retire (Annuler), vers la droite la recopie.
+- **Cible** : double progression, comme le panneau ; deux crans si tout est tenu avec 3 en réserve ; trois
+  séances sans progrès : décharge à −10 % signalée par le PC, puis on remonte.
+- **Récupération par muscle** : 8 séries difficiles font une dose, effacée de moitié en 24 h (bras, épaules),
+  30 h (pecs, dos) ou 48 h (jambes) ; sous 25 % prêt, sous 50 % presque. Même calcul que le panneau
+  (`herdr-sante`, `recuperation`), d'après le modèle d'openGym. Le PC envoie les doses des 7 derniers jours,
+  le téléphone y ajoute sa séance du jour.
+- **Silhouette** (Progrès) : séries de la semaine par muscle ou récupération, sur les tracés de
+  [MuscleMap](https://github.com/melihcolpan/MuscleMap) (licence MIT, reproduite en tête de `corps.js`). Et
+  l'équilibre tirer / pousser sur 4 semaines (posture, épaule droite).
 - **Progrès** : calendrier des séances, séries par semaine, courbe de chaque exercice (1RM estimé,
   charge), douleur à l'épaule, allure de course.
 - Les courbes sont en SVG écrit à la main, sans bibliothèque, pour marcher hors ligne.

@@ -10,6 +10,7 @@
 // dès que le réseau revient. Une séance = un document par jour, réécrit en entier.
 
 import { FICHES } from "./fiches.js";
+import { CORPS } from "./corps.js";
 
 const URL_API = "https://vesdcipjplvgdwfsvefq.supabase.co/rest/v1/rpc/";
 const PUBLIQUE = "sb_publishable_6sYHfOdCG9m-xAkfm8Zcwg_7F4ZKu2c";
@@ -76,10 +77,10 @@ function derniereFois(nom) {
   for (const s of toutesSeances()) {
     if (s.jour >= jour) continue;
     const e = s.exos?.find((x) => x.nom === nom && x.series?.length);
-    if (e) { mieux = { jour: s.jour, series: e.series.map((x) => [x.c, x.r]), cran: e.cran }; break; }
+    if (e) { mieux = { jour: s.jour, series: e.series.map((x) => [x.c, x.r]), rir: e.series.map((x) => x.e ?? null), cran: e.cran }; break; }
   }
   const h = ctx?.historique?.[nom];
-  if (h && h.jour < jour && (!mieux || h.jour > mieux.jour)) mieux = { jour: h.jour, series: h.series, cran: null };
+  if (h && h.jour < jour && (!mieux || h.jour > mieux.jour)) mieux = { jour: h.jour, series: h.series, rir: h.rir || null, cran: null };
   return mieux;
 }
 
@@ -91,21 +92,89 @@ function memo(nom) {
   return ctx?.exercices?.find((x) => x.nom === nom)?.reglage || "";
 }
 
-function cible(series) {
-  // Double progression, même règle que le panneau Santé : charge gardée tant que le schéma n'est
-  // pas tenu à la charge la plus haute, puis charge suivante.
+function cible(der, nom) {
+  // Double progression, même règle que le panneau Santé (herdr-sante, cible) : charge gardée tant
+  // que le schéma n'est pas tenu à la charge la plus haute, puis charge suivante ; deux crans si
+  // tout a été tenu avec 3 répétitions en réserve. Trois séances sans progrès : décharge à −10 %,
+  // signalée par le PC (il voit tout l'historique), tant qu'aucune séance plus récente ne l'a suivie.
+  const series = der.series;
   const { series: n = 4, reps = 8 } = ctx?.schema || {};
   const charges = series.map((s) => s[0]).filter((c) => c != null);
   if (!charges.length) return null;
   const haut = Math.max(...charges);
   const aHaut = series.filter((s) => s[0] === haut).map((s) => s[1]);
   if (haut === 0) return { texte: `vise ${Math.max(...aHaut) + 1} à la première série`, c: 0, r: Math.max(...aHaut) + 1 };
-  if (aHaut.length >= n && Math.min(...aHaut) >= reps)
+  const h = ctx?.historique?.[nom];
+  if (h?.stagne && h.decharge && h.jour === der.jour)
+    return { texte: `rien de gagné en 3 séances → décharge : ${kg(h.decharge)} kg, ${n}×${reps} sans forcer, puis on remonte`,
+             c: h.decharge, r: reps, decharge: true };
+  if (aHaut.length >= n && Math.min(...aHaut) >= reps) {
+    const notes = series.map((x, i) => [x[0], der.rir?.[i]]).filter(([c, e]) => c === haut && e != null).map((x) => x[1]);
+    if (notes.length >= n && Math.min(...notes) >= 3)
+      return { texte: `${n}×${reps} tenu, 3 en réserve partout → deux crans (+5 kg), vise ${n}×6-7`, c: haut, r: 6, monte: true };
     return { texte: `${n}×${reps} tenu → charge suivante, vise ${n}×6-7`, c: haut, r: 6, monte: true };
+  }
   if (aHaut.length < n) return { texte: `reste à ${kg(haut)} : vise ${n} séries`, c: haut, r: reps };
   const vise = [...aHaut].sort((a, b) => b - a).slice(0, n);
   vise[vise.length - 1] = Math.min(reps, vise[vise.length - 1] + 1);
   return { texte: `reste à ${kg(haut)} : vise ${vise.join(", ")}`, c: haut, r: vise[vise.length - 1] };
+}
+
+// ───────────────────────────────────────── récupération, volume, équilibre
+
+// Même calcul que le panneau (herdr-sante, recuperation) : 8 séries difficiles font une dose, une
+// série avec beaucoup de répétitions en réserve compte moins, la dose s'efface de moitié en 24 à 48 h
+// selon le muscle. Le PC envoie les doses des 7 derniers jours ; les séances du téléphone plus
+// récentes que sa dernière synchro remplacent les siennes, pour que la séance du jour compte déjà.
+const poidsReserve = (e) => (e == null || e <= 2 ? 1 : Math.max(0.3, 1 - 0.7 * (e - 2) / 4));
+const groupeDe = (nom) => ctx?.exercices?.find((x) => x.nom === nom)?.groupe;
+const seancesRecentes = () => toutesSeances().filter((s) => s.jour >= (ctx?.genere?.slice(0, 10) || "")
+  && s.exos?.some((e) => e.series?.length));
+
+function doses() {
+  const out = { ...(ctx?.doses || {}) };
+  for (const s of seancesRecentes()) {
+    for (const k of Object.keys(out)) if (k.startsWith(s.jour)) delete out[k];
+    const debut = s.exos.flatMap((e) => (e.series || []).map((x) => x.t)).filter(Boolean).sort()[0];
+    const k = `${s.jour}T${(debut || "18:00").slice(0, 5)}`;
+    for (const e of s.exos) {
+      const g = groupeDe(e.nom);
+      if (!g || !ctx?.demi_vie?.[g] || !e.series?.length) continue;
+      (out[k] ||= {})[g] = (out[k][g] || 0) + e.series.reduce((a, x) => a + poidsReserve(x.e), 0) / 8;
+    }
+  }
+  return out;
+}
+
+function recup() {
+  // groupe → fatigue de 0 à 1 ; sous 0,25 prêt, sous 0,5 presque, au-delà fatigué.
+  const hl = ctx?.demi_vie || {}, maintenant = Date.now(), reste = {};
+  for (const [k, gs] of Object.entries(doses())) {
+    const age = (maintenant - new Date(k).getTime()) / 36e5;   // « AAAA-MM-JJTHH:MM » : heure locale
+    if (age > 7 * 24) continue;
+    for (const [g, v] of Object.entries(gs)) if (hl[g]) reste[g] = (reste[g] || 0) + v * 0.5 ** (Math.max(0, age) / hl[g]);
+  }
+  return Object.fromEntries(Object.entries(reste).map(([g, v]) => [g, 1 - Math.exp(-v)]));
+}
+const etatRecup = (f) => (f >= 0.5 ? "rouge" : f >= 0.25 ? "jaune" : "vert");
+
+function seriesGroupes() {
+  // jour → {groupe: séries} sur 4 semaines : celles du PC, plus les séances récentes du téléphone.
+  const out = { ...(ctx?.series_groupes || {}) };
+  for (const s of seancesRecentes()) {
+    const j = (out[s.jour] = {});
+    for (const e of s.exos) {
+      const g = groupeDe(e.nom);
+      if (g && g !== "cardio" && e.series?.length) j[g] = (j[g] || 0) + e.series.length;
+    }
+  }
+  return out;
+}
+
+function volume(depuis) {
+  const v = {};
+  for (const [j, gs] of Object.entries(seriesGroupes())) if (j >= depuis) for (const [g, n] of Object.entries(gs)) v[g] = (v[g] || 0) + n;
+  return v;
 }
 
 function prochaine() {
@@ -229,6 +298,28 @@ function dessiner() {
     h += `<div class="carte conseil"><b>Repos selon la rotation</b>Posture et étirements sur le tapis.</div>`;
   }
   h += `<div class="types">${TYPES.map((t) => `<button data-type="${t}" class="${t === s.type ? "choisi" : ""}">${t}${t === p ? " ·" : ""}</button>`).join("")}</div>`;
+  const nSeries = ctx?.schema?.series || 4;
+  const faitesTot = s.exos.reduce((a, e) => a + (e.series?.length || 0), 0);
+  if (faitesTot) {
+    // Avancement de la séance : séries faites sur séries prévues, et durée depuis la première.
+    const prevues = Math.max(faitesTot, exosAffiches(s).length * nSeries);
+    const ts = s.exos.flatMap((e) => (e.series || []).map((x) => x.t)).filter(Boolean).sort();
+    let duree = "";
+    if (ts.length) {
+      const enMin = (t) => { const [a, b] = t.split(":").map(Number); return a * 60 + b; };
+      const n = new Date(), maint = n.getHours() * 60 + n.getMinutes();
+      const fin = jour === aujourdhui() && maint - enMin(ts[ts.length - 1]) < 20 ? maint : enMin(ts[ts.length - 1]);
+      duree = `${Math.max(0, fin - enMin(ts[0]))} min`;
+    }
+    h += `<div class="avance"><div class="j-haut"><span><b>${faitesTot}</b> / ${prevues} séries</span><span>${duree}</span></div>
+      <div class="j-barre"><i style="width:${Math.min(100, Math.round(100 * faitesTot / prevues))}%;background:var(--bleu)"></i></div></div>`;
+  }
+  const rc = recup();
+  if (Object.keys(rc).length) {
+    const pasPrets = Object.entries(rc).filter(([, f]) => f >= 0.25).sort((a, b) => b[1] - a[1]);
+    h += `<div class="sous recup">Récupération : ${pasPrets.length ? pasPrets.map(([g, f]) => `<span class="${etatRecup(f)}">${esc(g)} ${Math.round(f * 100)} %</span>`).join(" · ")
+      + " · le reste est récupéré" : "muscles récupérés"}</div>`;
+  }
   if (ctx?.jambes_depuis != null && s.type !== "legs" && ctx.jambes_depuis > 5)
     h += `<div class="sous alerte">Jambes : dernière séance il y a ${ctx.jambes_depuis} jours.</div>`;
 
@@ -236,7 +327,7 @@ function dessiner() {
     const e = s.exos.find((x) => x.nom === nom);
     const faites = e?.series || [];
     const der = derniereFois(nom);
-    const ci = der ? cible(der.series) : null;
+    const ci = der ? cible(der, nom) : null;
     const n = ctx?.schema?.series || 4;
     const st = saisie[nom] || (saisie[nom] = {
       c: faites.length ? faites[faites.length - 1].c : (ci?.c ?? der?.series?.[0]?.[0] ?? 20),
@@ -246,22 +337,32 @@ function dessiner() {
       <h3 data-ouvrir="${esc(nom)}"><span class="nom">${esc(nom)}${FICHES[nom] ? `<button class="info" data-fiche="${esc(nom)}" aria-label="Fiche de l'exercice">i</button>` : ""}</span><span class="n">${faites.length}/${n}</span></h3>`;
     if (der) h += `<div class="sous">${jj(der.jour)} : ${esc(formatSeries(der.series))}</div>`;
     else h += `<div class="sous">pas encore d'historique</div>`;
+    const g = groupeDe(nom), rec = ctx?.records?.[nom];
+    const tg = [];
+    if (g) tg.push(`<span class="tag ${rc[g] != null ? etatRecup(rc[g]) : ""}">${esc(g)}${rc[g] >= 0.25 ? ` · ${Math.round(rc[g] * 100)} %` : ""}</span>`);
+    if (rec?.charge) tg.push(`<span class="tag">record ${kg(rec.charge)} kg</span>`);
+    else if (rec?.reps) tg.push(`<span class="tag">record ${rec.reps} reps</span>`);
+    if (tg.length) h += `<div class="tags">${tg.join("")}</div>`;
     const mm = memo(nom);
     if (memoEdite === nom)
       h += `<div class="ligne2"><input id="memo-champ" value="${esc(mm)}" placeholder="cran 15 · siège 3 · prise large…"><button data-memo-ok>OK</button></div>`;
     else if (mm || ouvert === nom)
       h += `<div class="memo" data-memo="${esc(nom)}">📌 ${mm ? esc(mm) : "<i>ajouter un mémo de réglage</i>"}</div>`;
-    if (ci) h += `<div class="cible ${ci.monte ? "monte" : ""}">→ ${esc(ci.texte)}</div>`;
+    if (ci) h += `<div class="cible ${ci.monte ? "monte" : ""} ${ci.decharge ? "decharge" : ""}">→ ${esc(ci.texte)}</div>`;
     if (e?.note && ouvert !== nom) h += `<div class="remarque">✎ ${esc(e.note)}</div>`;
-    if (faites.length)
-      h += `<div class="series">${faites.map((x, i) => `<span class="serie ${choisie?.[0] === nom && choisie[1] === i ? "choisie" : ""}" data-serie="${i}" data-nom="${esc(nom)}">${kg(x.c)}×${x.r}</span>`).join("")}</div>`;
+    // Les séries faites, puis celles qui restent, en pointillé, à la charge prévue. Glisser une série
+    // vers la gauche la retire (avec Annuler), vers la droite la recopie.
+    const restantes = Math.max(0, n - faites.length);
+    h += `<div class="series">${faites.map((x, i) => `<span class="serie ${choisie?.[0] === nom && choisie[1] === i ? "choisie" : ""}" data-serie="${i}" data-nom="${esc(nom)}">${kg(x.c)}×${x.r}${x.e != null ? `<small>@${x.e}</small>` : ""}</span>`).join("")}`
+      + Array.from({ length: restantes }, () => `<span class="prevue">${kg(st.c)}×${st.r}</span>`).join("") + `</div>`;
     h += `<div class="saisie">
         <div class="rangee"><label>kg</label><button data-pas="-2.5">−2,5</button><button data-pas="-1">−1</button>
           <span class="val">${kg(st.c)}</span><button data-pas="1">+1</button><button data-pas="2.5">+2,5</button></div>
         <div class="rangee"><label>reps</label><button data-reps="-1">−</button><span class="val">${st.r}</span><button data-reps="1">+</button></div>
         <input class="note-exo" data-note-exo value="${esc(e?.note || "")}" placeholder="Note sur l'exercice (sensations, réglage, douleur…)">
         <button class="gros" data-valider>Série ${faites.length + 1} ✓</button>
-        ${choisie?.[0] === nom ? `<button class="gros danger" data-retirer>Retirer ${kg(faites[choisie[1]]?.c)}×${faites[choisie[1]]?.r}</button>` : ""}
+        ${choisie?.[0] === nom ? `<div class="reserve"><span class="sous">Il en restait combien ?</span>${[0, 1, 2, 3, 4].map((k) => `<button data-reserve="${k}" class="${faites[choisie[1]]?.e === k ? "choisi" : ""}">${k === 4 ? "4+" : k}</button>`).join("")}</div>
+          <button class="gros danger" data-retirer>Retirer ${kg(faites[choisie[1]]?.c)}×${faites[choisie[1]]?.r}</button>` : ""}
       </div></div>`;
   }
   h += `<button class="lien" id="ajouter">+ Ajouter un exercice</button>`;
@@ -389,6 +490,8 @@ function progres() {
     sem.push([de.toISOString().slice(0, 10), n]);
   }
   h += `<div class="carte graphe"><h4>Séries par semaine</h4>${barresSemaines(sem)}</div>`;
+  h += carteCorps(lundi.toISOString().slice(0, 10));
+  h += carteEquilibre();
 
   // Un exercice : 1RM estimé et charge la plus haute de chaque séance.
   const prog = { ...(ctx?.progres || {}) };
@@ -419,6 +522,68 @@ function progres() {
     fmt: (v) => `${Math.floor(v)}'${String(Math.round((v % 1) * 60)).padStart(2, "0")}`, legende: "min/km, plus bas = plus rapide" });
   if (ctx?.genere) h += `<p class="sous">Données du PC du ${jj(ctx.genere)} à ${ctx.genere.slice(11, 16)}.</p>`;
   return h;
+}
+
+// La silhouette : séries de la semaine par muscle, ou récupération (même calcul que le panneau).
+// Chaque groupe d'exercices.md correspond à une ou plusieurs zones du dessin, de face ou de dos.
+const ZONES = {
+  pecs: [["face", "chest"]], dos: [["dos", "upperBack"], ["dos", "lowerBack"], ["dos", "rotatorCuff"]],
+  "épaules": [["face", "deltoids"]], "épaules arrière": [["dos", "deltoids"]], triceps: [["face", "triceps"], ["dos", "triceps"]],
+  biceps: [["face", "biceps"]], "avant-bras": [["face", "forearm"], ["dos", "forearm"]],
+  quadriceps: [["face", "quadriceps"], ["face", "hipFlexors"]], ischios: [["dos", "hamstring"]], fessiers: [["dos", "gluteal"]],
+  adducteurs: [["face", "adductors"], ["dos", "adductors"]], mollets: [["face", "calves"], ["dos", "calves"]],
+  abdos: [["face", "abs"], ["face", "obliques"], ["face", "serratus"]],
+  cou: [["face", "neck"], ["face", "trapezius"], ["dos", "neck"], ["dos", "trapezius"]],
+};
+const ZONE_GROUPE = Object.fromEntries(Object.entries(ZONES).flatMap(([g, zs]) => zs.map(([v, m]) => [`${v}:${m}`, g])));
+let modeCorps = lire("carnet:corps", "volume");
+
+function silhouette(couleurs) {
+  return `<div class="corps">${["face", "dos"].map((v) => `<svg viewBox="${CORPS[v].vb}" role="img" aria-label="${v === "face" ? "de face" : "de dos"}">`
+    + Object.entries(CORPS[v].m).map(([m, d]) => {
+      const g = ZONE_GROUPE[`${v}:${m}`];
+      return `<path d="${d}" fill="${g ? couleurs[g] || "var(--repos)" : "var(--carte2)"}"/>`;
+    }).join("") + `</svg>`).join("")}</div>`;
+}
+
+function carteCorps(lundi) {
+  let couleurs = {}, detail = "", legende = "";
+  if (modeCorps === "recup") {
+    const rc = recup();
+    for (const [g, f] of Object.entries(rc)) couleurs[g] = `var(--${etatRecup(f)})`;
+    const tri = Object.entries(rc).sort((a, b) => b[1] - a[1]);
+    detail = tri.length ? tri.map(([g, f]) => `<span class="${etatRecup(f)}">${esc(g)} ${Math.round(f * 100)} %</span>`).join(" · ")
+      : "rien de travaillé ces 7 derniers jours";
+    legende = `<span><i style="background:var(--rouge)"></i>fatigué</span><span><i style="background:var(--jaune)"></i>presque</span>
+      <span><i style="background:var(--vert)"></i>prêt</span><span><i style="background:var(--repos)"></i>pas travaillé</span>`;
+  } else {
+    const v = volume(lundi);
+    // 10 séries par muscle et par semaine : le bas de la fourchette conseillée pour progresser.
+    for (const [g, n] of Object.entries(v)) couleurs[g] = n >= 10 ? "var(--vert)" : n >= 6 ? "rgba(48,209,88,.6)" : "rgba(48,209,88,.3)";
+    const tri = Object.entries(v).sort((a, b) => b[1] - a[1]);
+    detail = tri.length ? tri.map(([g, n]) => `${esc(g)} ${n}`).join(" · ") : "aucune série cette semaine";
+    legende = `<span><i style="background:rgba(48,209,88,.3)"></i>1-5</span><span><i style="background:rgba(48,209,88,.6)"></i>6-9</span>
+      <span><i style="background:var(--vert)"></i>10 et plus</span><span><i style="background:var(--repos)"></i>0</span>`;
+  }
+  return `<div class="carte"><div class="c-tete"><b>${modeCorps === "recup" ? "Récupération" : "Séries de la semaine"}</b>
+      <span class="sous">par muscle</span></div>
+    <div class="periode"><button data-corps="volume" class="${modeCorps !== "recup" ? "choisi" : ""}">Volume</button>
+      <button data-corps="recup" class="${modeCorps === "recup" ? "choisi" : ""}">Récupération</button></div>
+    ${silhouette(couleurs)}<div class="legende">${legende}</div><div class="sous" style="margin-top:6px">${detail}</div></div>`;
+}
+
+function carteEquilibre() {
+  // Tirer / pousser sur 4 semaines : pour la posture et l'épaule droite, au moins autant de tirage.
+  const tp = ctx?.tirer_pousser;
+  if (!tp) return "";
+  const debut = new Date(new Date(jour) - 27 * 864e5).toISOString().slice(0, 10), v = volume(debut);
+  const t = tp.tirer.reduce((a, g) => a + (v[g] || 0), 0), p = tp.pousser.reduce((a, g) => a + (v[g] || 0), 0);
+  if (!t && !p) return "";
+  const r = p ? t / p : null, ton = r == null || r >= 1 ? "vert" : r >= 0.8 ? "jaune" : "rouge";
+  return `<div class="carte"><div class="c-tete"><b>Tirer / pousser</b><span class="sous">séries sur 4 semaines</span></div>
+    <div class="eq"><i style="flex:${t || 0.01};background:var(--violet)"></i><i style="flex:${p || 0.01};background:var(--bleu)"></i></div>
+    <div class="j-haut" style="margin-top:6px"><span>tirer <b>${t}</b></span><span class="${ton}">${r == null ? "" : `rapport ${virgule(r)}`}</span><span>pousser <b>${p}</b></span></div>
+    <div class="sous" style="margin-top:6px">${ton === "vert" ? "Équilibré. " : "Trop de poussée. "}Pour la posture (épaules enroulées) et l'épaule droite, vise au moins autant de séries de tirage (dos, épaules arrière, biceps) que de poussée (pecs, épaules, triceps).</div></div>`;
 }
 
 // ───────────────────────────────────────── l'onglet Santé
@@ -591,7 +756,9 @@ function sante() {
 
 // ───────────────────────────────────────── les gestes
 
+let sansClic = 0;   // après un glissement sur une série, le clic qui suit ne la sélectionne pas
 document.addEventListener("click", (ev) => {
+  if (Date.now() - sansClic < 450) return;
   const t = ev.target.closest("button, h3, .serie, [data-memo]");
   if (!t) return;
   const carte = t.closest("[data-exo]");
@@ -617,6 +784,11 @@ document.addEventListener("click", (ev) => {
   } else if (t.dataset.objectif) {
     const x = ctx?.sante?.objectifs?.find((o) => o.texte === t.dataset.objectif);
     if (x) geste("objectifs", x.texte, !etatGeste("objectifs", x.texte, x.fait));
+  } else if (t.dataset.corps) {
+    modeCorps = t.dataset.corps; ecrire("carnet:corps", modeCorps);
+  } else if (t.dataset.reserve != null) {
+    const x = s.exos.find((e) => e.nom === choisie?.[0])?.series?.[choisie[1]];
+    if (x) { const k = Number(t.dataset.reserve); if (x.e === k) delete x.e; else x.e = k; sauver(); }
   } else if (t.dataset.periode) {
     periode = Number(t.dataset.periode); ecrire("carnet:periode", periode);
   } else if (t.dataset.douleur != null) {
@@ -649,9 +821,10 @@ document.addEventListener("click", (ev) => {
     const n = ctx?.schema?.series || 4;
     if (e.series.length >= n) finExercice(nom);
     else {
-      const der = derniereFois(nom), ci = der ? cible(der.series) : null;
+      const der = derniereFois(nom), ci = der ? cible(der, nom) : null;
       lancerRepos(nom, `${nom} · série ${e.series.length + 1}/${n} ensuite`, `${kg(st.c)} kg × ${ci?.r && ci.c === st.c ? ci.r : st.r}`);
     }
+    minu.effort = { nom, i: e.series.length - 1 }; garder();   // l'effort se note pendant le repos
   } else if (t.classList.contains("serie")) {
     const i = Number(t.dataset.serie);
     choisie = choisie?.[0] === t.dataset.nom && choisie[1] === i ? null : [t.dataset.nom, i];
@@ -767,6 +940,65 @@ $("#choix").addEventListener("click", (ev) => {
 });
 $("#fermer-ajout").addEventListener("click", () => $("#ajout").close());
 
+// ───────────────────────────────────────── glisser une série
+
+// Vers la gauche : retirée (Annuler pendant 5 s). Vers la droite : recopiée (même charge, mêmes
+// répétitions), pour la série identique qu'on vient de refaire.
+let glisse = null, annulation = null;
+document.addEventListener("touchstart", (ev) => {
+  const el = ev.target.closest(".serie");
+  glisse = el ? { el, x: ev.touches[0].clientX, y: ev.touches[0].clientY } : null;
+}, { passive: true });
+document.addEventListener("touchmove", (ev) => {
+  if (!glisse) return;
+  const dx = ev.touches[0].clientX - glisse.x;
+  if (Math.abs(dx) > 8 && Math.abs(dx) > Math.abs(ev.touches[0].clientY - glisse.y)) {
+    glisse.el.style.transform = `translateX(${dx}px)`;
+    glisse.el.style.background = dx < -60 ? "var(--rouge)" : dx > 60 ? "var(--vert)" : "";
+  }
+}, { passive: true });
+document.addEventListener("touchend", (ev) => {
+  if (!glisse) return;
+  const { el, x, y } = glisse;
+  glisse = null;
+  const dx = ev.changedTouches[0].clientX - x, dy = ev.changedTouches[0].clientY - y;
+  el.style.transform = ""; el.style.background = "";
+  if (Math.abs(dx) < 60 || Math.abs(dy) > Math.abs(dx)) return;
+  sansClic = Date.now();
+  const nom = el.dataset.nom, i = Number(el.dataset.serie), s = seanceDuJour();
+  const e = s.exos.find((z) => z.nom === nom);
+  if (!e?.series?.[i]) return;
+  if (dx < 0) {
+    const [serie] = e.series.splice(i, 1);
+    const ordre = s.exos.indexOf(e);
+    if (!e.series.length) s.exos = s.exos.filter((z) => z !== e);
+    annulation = { nom, i, serie, ordre };
+    toast(`Série ${kg(serie.c)}×${serie.r} retirée`, true);
+  } else {
+    e.series.splice(i + 1, 0, { c: e.series[i].c, r: e.series[i].r, t: new Date().toTimeString().slice(0, 8) });
+    toast(`Série ${kg(e.series[i].c)}×${e.series[i].r} recopiée`, false);
+  }
+  navigator.vibrate?.(25);
+  choisie = null; sauver(); dessiner();
+});
+
+let toastFin = null;
+function toast(texte, annulable) {
+  const t = $("#toast");
+  t.innerHTML = `<span>${esc(texte)}</span>${annulable ? `<button id="annuler">Annuler</button>` : ""}`;
+  t.classList.add("vu");
+  clearTimeout(toastFin);
+  toastFin = setTimeout(() => { t.classList.remove("vu"); annulation = null; }, 5000);
+}
+$("#toast").addEventListener("click", (ev) => {
+  if (ev.target.id !== "annuler" || !annulation) return;
+  const s = seanceDuJour(), { nom, i, serie, ordre } = annulation;
+  let e = s.exos.find((z) => z.nom === nom);
+  if (!e) { e = { nom, series: [] }; s.exos.splice(Math.min(ordre, s.exos.length), 0, e); }
+  e.series.splice(Math.min(i, e.series.length), 0, serie);
+  annulation = null; $("#toast").classList.remove("vu"); sauver(); dessiner();
+});
+
 // ───────────────────────────────────────── repos entre les séries
 
 // Durée par défaut : 2 min 30 sur les polyarticulaires (développés, tirages, presse…), 1 min 30 sur
@@ -798,6 +1030,7 @@ function majRepos() {
   const el = $("#minuteur");
   if (!minu) { el.className = "minuteur"; return; }
   $("#min-quoi").textContent = minu.quoi;
+  majEffort();
   $("#min-cible").textContent = minu.cible || "";
   if (minu.mode === "fin") {
     el.className = "minuteur actif";
@@ -818,7 +1051,19 @@ function majRepos() {
     sonne = true;
     navigator.vibrate?.([300, 150, 300, 150, 300]);
     bip();
+    // L'écran clignote aussi : en salle, le bip se perd dans la musique.
+    const f = $("#flash"); f.classList.remove("on"); void f.offsetWidth; f.classList.add("on");
   }
+}
+
+function majEffort() {
+  // « Il en restait combien ? » sous le minuteur, pour la série qui vient d'être faite. Facultatif :
+  // la réserve affine la cible et la récupération ; sans réponse, la série compte comme difficile.
+  const el = $("#min-effort"), ef = minu?.effort;
+  const x = ef ? seanceDuJour().exos.find((e) => e.nom === ef.nom)?.series?.[ef.i] : null;
+  const html = x ? `<span>Il en restait combien ?</span>${[0, 1, 2, 3, 4].map((k) =>
+    `<button data-effort="${k}" class="${x.e === k ? "choisi" : ""}">${k === 4 ? "4+" : k}</button>`).join("")}` : "";
+  if (el.dataset.html !== html) { el.innerHTML = html; el.dataset.html = html; }
 }
 
 function bip() {
@@ -837,6 +1082,13 @@ function bip() {
 }
 
 $("#minuteur").addEventListener("click", (ev) => {
+  const ef = ev.target.closest("[data-effort]");
+  if (ef && minu?.effort) {
+    const x = seanceDuJour().exos.find((e) => e.nom === minu.effort.nom)?.series?.[minu.effort.i];
+    if (x) { x.e = Number(ef.dataset.effort); sauver(); dessiner(); }
+    navigator.vibrate?.(20);
+    return garder();
+  }
   const b = ev.target.closest("[data-min]");
   if (!b || !minu) return;
   const a = b.dataset.min;

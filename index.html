@@ -12,7 +12,7 @@
   :root {
     --bg: #000; --carte: #1c1c1e; --carte2: #2c2c2e; --ligne: #38383a;
     --texte: #f2f2f7; --doux: #8e8e93; --bleu: #0a84ff; --vert: #30d158;
-    --jaune: #ffd60a; --rouge: #ff453a; --violet: #bf5af2;
+    --jaune: #ffd60a; --rouge: #ff453a; --violet: #bf5af2; --repos: #48484a;
   }
   * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
   html, body { margin: 0; background: var(--bg); color: var(--texte);
@@ -165,6 +165,34 @@
   .info { flex: none; width: 22px; height: 22px; border-radius: 50%; border: 1px solid var(--doux); background: none;
     color: var(--doux); font: italic 600 13px/1 Georgia, serif; padding: 0; }
   #fiche { padding: 12px; }
+  /* Séance : avancement, récupération, étiquettes, séries prévues, réserve */
+  .avance { margin: 10px 0 2px; }
+  .recup { margin: 8px 0 0; }
+  .tags { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 6px; }
+  .tag { font-size: 12px; padding: 2px 8px; border-radius: 999px; background: var(--carte2); color: var(--doux); }
+  .tag.vert { color: var(--vert); } .tag.jaune { color: var(--jaune); } .tag.rouge { color: var(--rouge); }
+  .exo .cible.decharge { color: var(--jaune); }
+  .prevue { border: 1px dashed var(--ligne); color: var(--doux); border-radius: 8px; padding: 5px 10px; font-variant-numeric: tabular-nums; }
+  .serie small { color: var(--doux); font-size: 12px; margin-left: 2px; }
+  .serie { transition: background .15s; touch-action: pan-y; }
+  .reserve { display: grid; grid-template-columns: auto repeat(5, 1fr); gap: 6px; align-items: center; margin: 8px 0 2px; }
+  .reserve button, .effort button { height: 38px; border: 0; border-radius: 9px; background: var(--carte2); color: var(--texte); font-size: 15px; padding: 0; }
+  .reserve button.choisi, .effort button.choisi { background: var(--bleu); font-weight: 600; }
+  .effort { display: grid; grid-template-columns: auto repeat(5, 1fr); gap: 6px; align-items: center; margin: 0 0 8px; font-size: 13px; color: var(--doux); }
+  .effort:empty { display: none; }
+  .effort button { background: var(--carte); height: 36px; }
+  #flash { position: fixed; inset: 0; background: var(--vert); opacity: 0; pointer-events: none; z-index: 50; }
+  #flash.on { animation: flash .45s ease-in-out 3; }
+  @keyframes flash { 50% { opacity: .5; } }
+  #toast { position: fixed; left: 12px; right: 12px; bottom: calc(150px + env(safe-area-inset-bottom)); background: var(--texte); color: #000;
+    border-radius: 12px; padding: 10px 14px; display: none; align-items: center; justify-content: space-between; gap: 10px; z-index: 40; font-size: 15px; }
+  #toast.vu { display: flex; }
+  #toast button { border: 0; background: none; color: var(--bleu); font-weight: 700; font-size: 15px; padding: 6px 0; }
+  /* Progrès : silhouette et équilibre */
+  .corps { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin-top: 10px; }
+  .corps svg { width: 100%; height: auto; display: block; }
+  .corps path { stroke: var(--bg); stroke-width: 2; }
+  .eq { display: flex; gap: 3px; height: 12px; border-radius: 6px; overflow: hidden; margin-top: 10px; }
   .f-images { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
   .f-images figure { margin: 0; }
   .f-images img { width: 100%; aspect-ratio: 4 / 3; object-fit: cover; border-radius: 10px; display: block; background: var(--carte2); }
@@ -187,6 +215,7 @@
   <div class="quoi" id="min-quoi"></div>
   <div class="haut"><div class="chrono" id="chrono">1:30</div><div class="sous" id="min-cible"></div></div>
   <div class="jauge"><i id="min-jauge"></i></div>
+  <div class="effort" id="min-effort"></div>
   <div class="boutons" id="min-boutons"></div>
 </div>
 <dialog id="ajout">
@@ -194,6 +223,8 @@
   <div class="choix" id="choix"></div>
   <button class="lien" id="fermer-ajout">Annuler</button>
 </dialog>
+<div id="flash"></div>
+<div id="toast" role="status"></div>
 <dialog id="fiche">
   <div id="fiche-contenu"></div>
   <button class="lien" id="fermer-fiche">Fermer</button>
