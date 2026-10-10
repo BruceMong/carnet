@@ -53,9 +53,9 @@ let distantes = lire("carnet:seances", []);    // séances des 90 derniers jours
 const jour = aujourdhui();
 let doc = lire(`carnet:seance:${jour}`)?.doc || null;
 let ouvert = null;                            // exercice dont la saisie est dépliée
-let saisie = {};                              // nom → {c, r} en cours de réglage
+let saisie = {};                              // nom → {edits: {ligne: {c, r}}, extra} : lignes prévues réglées à la main
 let memoEdite = null;                         // exercice dont le mémo est en cours de modification
-let choisie = null;                           // [nom, index] de la série sélectionnée (pour la retirer)
+let choisie = null;                           // [nom, ligne] sélectionnée (sinon : la prochaine série)
 let onglet = "seance";                        // « seance », « sante » ou « progres »
 let exoGraphe = lire("carnet:exo-graphe");    // exercice tracé dans Progrès
 
@@ -118,6 +118,50 @@ function cible(der, nom) {
   const vise = [...aHaut].sort((a, b) => b - a).slice(0, n);
   vise[vise.length - 1] = Math.min(reps, vise[vise.length - 1] + 1);
   return { texte: `reste à ${kg(haut)} : vise ${vise.join(", ")}`, c: haut, r: vise[vise.length - 1] };
+}
+
+// ───────────────────────────────────────── les lignes de séries
+
+// Chaque exercice se lit en lignes, comme dans openGym : les séries faites, puis les séries prévues,
+// pré-remplies. Une ligne prévue reprend la ligne d'avant (la dernière série faite, ou la cible),
+// sauf si on l'a réglée : régler la charge d'une ligne la fait suivre aux suivantes. Une ligne faite
+// se corrige directement (charge, répétitions, réserve) au lieu d'être retirée puis refaite.
+function lignesDe(nom) {
+  const e = seanceDuJour().exos.find((x) => x.nom === nom);
+  const faites = e?.series || [];
+  const der = derniereFois(nom), ci = der ? cible(der, nom) : null;
+  const n = ctx?.schema?.series || 4;
+  const st = (saisie[nom] ||= { edits: {}, extra: 0 });
+  let prec = faites.length ? { c: faites[faites.length - 1].c, r: faites[faites.length - 1].r }
+    : { c: ci?.c ?? der?.series?.[0]?.[0] ?? 20, r: ci?.r ?? ctx?.schema?.reps ?? 8 };
+  const L = faites.map((x, k) => ({ k, c: x.c, r: x.r, e: x.e, fait: true }));
+  for (let j = 0; j < Math.max(0, n - faites.length) + st.extra; j++) {
+    const k = faites.length + j;
+    prec = { ...prec, ...(st.edits[k] || {}) };
+    L.push({ k, c: prec.c, r: prec.r, fait: false });
+  }
+  const k0 = faites.length;   // la prochaine série
+  const ks = choisie?.[0] === nom && L.some((l) => l.k === choisie[1]) ? choisie[1] : (L.some((l) => l.k === k0) ? k0 : null);
+  return { e, L, k0, ks, der, ci, n, st };
+}
+
+// Une série faite retirée ou ajoutée décale les lignes prévues qui suivent, et leurs réglages.
+function decaler(nom, depuis, d) {
+  const st = saisie[nom];
+  if (!st) return;
+  st.edits = Object.fromEntries(Object.entries(st.edits).map(([k, v]) => [Number(k) > depuis ? Number(k) + d : Number(k), v]));
+}
+
+function retirerSerie(nom, i) {
+  const s = seanceDuJour(), e = s.exos.find((z) => z.nom === nom);
+  if (!e?.series?.[i]) return;
+  const [serie] = e.series.splice(i, 1);
+  const ordre = s.exos.indexOf(e);
+  if (!e.series.length) s.exos = s.exos.filter((z) => z !== e);
+  decaler(nom, i, -1);
+  annulation = { nom, i, serie, ordre };
+  toast(`Série ${kg(serie.c)}×${serie.r} retirée`, true);
+  choisie = null; sauver();
 }
 
 // ───────────────────────────────────────── récupération, volume, équilibre
@@ -329,10 +373,7 @@ function dessiner() {
     const der = derniereFois(nom);
     const ci = der ? cible(der, nom) : null;
     const n = ctx?.schema?.series || 4;
-    const st = saisie[nom] || (saisie[nom] = {
-      c: faites.length ? faites[faites.length - 1].c : (ci?.c ?? der?.series?.[0]?.[0] ?? 20),
-      r: faites.length ? faites[faites.length - 1].r : (ci?.r ?? ctx?.schema?.reps ?? 8),
-    });
+    const { L, k0, ks } = lignesDe(nom);
     h += `<div class="carte exo ${ouvert === nom ? "ouvert" : ""} ${faites.length >= n ? "fait" : ""}" data-exo="${esc(nom)}">
       <h3 data-ouvrir="${esc(nom)}"><span class="nom">${esc(nom)}${FICHES[nom] ? `<button class="info" data-fiche="${esc(nom)}" aria-label="Fiche de l'exercice">i</button>` : ""}</span><span class="n">${faites.length}/${n}</span></h3>`;
     if (der) h += `<div class="sous">${jj(der.jour)} : ${esc(formatSeries(der.series))}</div>`;
@@ -350,20 +391,36 @@ function dessiner() {
       h += `<div class="memo" data-memo="${esc(nom)}">📌 ${mm ? esc(mm) : "<i>ajouter un mémo de réglage</i>"}</div>`;
     if (ci) h += `<div class="cible ${ci.monte ? "monte" : ""} ${ci.decharge ? "decharge" : ""}">→ ${esc(ci.texte)}</div>`;
     if (e?.note && ouvert !== nom) h += `<div class="remarque">✎ ${esc(e.note)}</div>`;
-    // Les séries faites, puis celles qui restent, en pointillé, à la charge prévue. Glisser une série
-    // vers la gauche la retire (avec Annuler), vers la droite la recopie.
-    const restantes = Math.max(0, n - faites.length);
-    h += `<div class="series">${faites.map((x, i) => `<span class="serie ${choisie?.[0] === nom && choisie[1] === i ? "choisie" : ""}" data-serie="${i}" data-nom="${esc(nom)}">${kg(x.c)}×${x.r}${x.e != null ? `<small>@${x.e}</small>` : ""}</span>`).join("")}`
-      + Array.from({ length: restantes }, () => `<span class="prevue">${kg(st.c)}×${st.r}</span>`).join("") + `</div>`;
-    h += `<div class="saisie">
+    const fmtL = (l) => `${l.c === 0 ? "pdc" : `${kg(l.c)} kg`} × ${l.r}`;
+    if (ouvert !== nom) {
+      // Carte fermée : le résumé en puces, faites puis prévues (pointillé). Toucher une puce ouvre sa ligne.
+      if (L.length) h += `<div class="series">${L.map((l) => l.fait
+        ? `<span class="serie" data-ligne="${l.k}" data-nom="${esc(nom)}">${kg(l.c)}×${l.r}${l.e != null ? `<small>@${l.e}</small>` : ""}</span>`
+        : `<span class="prevue" data-ligne="${l.k}" data-nom="${esc(nom)}">${kg(l.c)}×${l.r}</span>`).join("")}</div>`;
+    } else {
+      // Carte ouverte : une ligne par série. Le rond de la prochaine série la valide ; toucher une ligne
+      // la sélectionne pour la régler (prévue) ou la corriger (faite) avec les boutons du dessous.
+      // Glisser une série faite vers la gauche la retire (Annuler), vers la droite la recopie.
+      h += `<div class="lignes-series">${L.map((l) => `<div class="ls ${l.fait ? "fait" : l.k === k0 ? "prochaine" : "prevue"} ${l.k === ks ? "sel" : ""}" data-ligne="${l.k}" data-nom="${esc(nom)}">
+          <span class="ls-n">${l.k + 1}</span><span class="ls-v">${fmtL(l)}</span><span class="ls-e">${l.e != null ? `${l.e === 4 ? "4+" : l.e} en réserve` : ""}</span>
+          ${l.fait ? `<span class="ls-ok fait">✓</span>` : l.k === k0 ? `<button class="ls-ok" data-cocher aria-label="Valider la série ${l.k + 1}"></button>` : `<span class="ls-ok vide"></span>`}</div>`).join("")}</div>`;
+      const ls = L.find((l) => l.k === ks);
+      h += `<div class="saisie">`;
+      if (ls) {
+        h += `<div class="sous sel-titre">${ls.fait ? `Série ${ks + 1}, faite : corriger` : ks === k0 ? `Série ${ks + 1}` : `Série ${ks + 1}, prévue`}</div>
         <div class="rangee"><label>kg</label><button data-pas="-2.5">−2,5</button><button data-pas="-1">−1</button>
-          <span class="val">${kg(st.c)}</span><button data-pas="1">+1</button><button data-pas="2.5">+2,5</button></div>
-        <div class="rangee"><label>reps</label><button data-reps="-1">−</button><span class="val">${st.r}</span><button data-reps="1">+</button></div>
-        <input class="note-exo" data-note-exo value="${esc(e?.note || "")}" placeholder="Note sur l'exercice (sensations, réglage, douleur…)">
-        <button class="gros" data-valider>Série ${faites.length + 1} ✓</button>
-        ${choisie?.[0] === nom ? `<div class="reserve"><span class="sous">Il en restait combien ?</span>${[0, 1, 2, 3, 4].map((k) => `<button data-reserve="${k}" class="${faites[choisie[1]]?.e === k ? "choisi" : ""}">${k === 4 ? "4+" : k}</button>`).join("")}</div>
-          <button class="gros danger" data-retirer>Retirer ${kg(faites[choisie[1]]?.c)}×${faites[choisie[1]]?.r}</button>` : ""}
-      </div></div>`;
+          <span class="val">${kg(ls.c)}</span><button data-pas="1">+1</button><button data-pas="2.5">+2,5</button></div>
+        <div class="rangee"><label>reps</label><button data-reps="-1">−</button><span class="val">${ls.r}</span><button data-reps="1">+</button></div>`;
+        if (ls.fait)
+          h += `<div class="reserve"><span class="sous">Il en restait combien ?</span>${[0, 1, 2, 3, 4].map((k) => `<button data-reserve="${k}" class="${ls.e === k ? "choisi" : ""}">${k === 4 ? "4+" : k}</button>`).join("")}</div>
+            <div class="deux"><button class="gros danger" data-retirer>Retirer</button><button class="gros" data-deselect>OK</button></div>`;
+        else if (ks === k0) h += `<button class="gros" data-valider>Série ${ks + 1} ✓</button>`;
+        else h += `<button class="gros secondaire" data-deselect>OK</button>`;
+      }
+      h += `<input class="note-exo" data-note-exo value="${esc(e?.note || "")}" placeholder="Note sur l'exercice (sensations, réglage, douleur…)">
+        <button class="lien" data-plus-serie>+ une série</button></div>`;
+    }
+    h += `</div>`;
   }
   h += `<button class="lien" id="ajouter">+ Ajouter un exercice</button>`;
   // Épaule droite : la douleur du jour règle la réintroduction des exercices en pause.
@@ -759,7 +816,7 @@ function sante() {
 let sansClic = 0;   // après un glissement sur une série, le clic qui suit ne la sélectionne pas
 document.addEventListener("click", (ev) => {
   if (Date.now() - sansClic < 450) return;
-  const t = ev.target.closest("button, h3, .serie, [data-memo]");
+  const t = ev.target.closest("button, h3, [data-ligne], [data-memo]");
   if (!t) return;
   const carte = t.closest("[data-exo]");
   const nom = carte?.dataset.exo;
@@ -787,7 +844,7 @@ document.addEventListener("click", (ev) => {
   } else if (t.dataset.corps) {
     modeCorps = t.dataset.corps; ecrire("carnet:corps", modeCorps);
   } else if (t.dataset.reserve != null) {
-    const x = s.exos.find((e) => e.nom === choisie?.[0])?.series?.[choisie[1]];
+    const { e, ks } = lignesDe(nom), x = e?.series?.[ks];
     if (x) { const k = Number(t.dataset.reserve); if (x.e === k) delete x.e; else x.e = k; sauver(); }
   } else if (t.dataset.periode) {
     periode = Number(t.dataset.periode); ecrire("carnet:periode", periode);
@@ -802,38 +859,46 @@ document.addEventListener("click", (ev) => {
   } else if (t.dataset.exoGraphe != null) {
     return;
   } else if (t.dataset.type) {
-    s.type = t.dataset.type; ouvert = null; choisie = null; sauver();
+    s.type = t.dataset.type; ouvert = null; choisie = null; saisie = {}; sauver();
   } else if (t.dataset.ouvrir != null) {
     ouvert = ouvert === nom ? null : nom; choisie = null;
-  } else if (t.dataset.pas) {
-    const st = saisie[nom];
-    st.c = Math.max(0, Math.round((Number(st.c || 0) + Number(t.dataset.pas)) * 4) / 4);
-  } else if (t.dataset.reps) {
-    saisie[nom].r = Math.max(1, saisie[nom].r + Number(t.dataset.reps));
-  } else if (t.hasAttribute("data-valider")) {
-    const st = saisie[nom];
+  } else if (t.dataset.pas || t.dataset.reps) {
+    // Régler la ligne sélectionnée : une série faite est corrigée en place, une prévue est notée
+    // dans les réglages (et les lignes prévues suivantes la suivent).
+    const { e, L, ks, st } = lignesDe(nom), l = L.find((x) => x.k === ks);
+    if (!l) return;
+    const c = t.dataset.pas ? Math.max(0, Math.round((Number(l.c || 0) + Number(t.dataset.pas)) * 4) / 4) : l.c;
+    const r = t.dataset.reps ? Math.max(1, l.r + Number(t.dataset.reps)) : l.r;
+    if (l.fait) { Object.assign(e.series[ks], { c, r }); sauver(); }
+    else st.edits[ks] = { c, r };
+  } else if (t.hasAttribute("data-valider") || t.hasAttribute("data-cocher")) {
+    const { L, k0, n, st, der, ci } = lignesDe(nom), l = L.find((x) => x.k === k0);
+    if (!l) return;
     let e = s.exos.find((x) => x.nom === nom);
     if (!e) { e = { nom, series: [] }; s.exos.push(e); }
-    const maintenant = new Date();
-    e.series.push({ c: st.c, r: st.r, t: maintenant.toTimeString().slice(0, 8) });
+    if (e.series.length >= n) st.extra = Math.max(0, st.extra - 1);   // une série ajoutée en plus est faite
+    e.series.push({ c: l.c, r: l.r, t: new Date().toTimeString().slice(0, 8) });
+    delete st.edits[k0];
+    choisie = null; ouvert = nom;
     navigator.vibrate?.(30);
     sauver();
-    const n = ctx?.schema?.series || 4;
-    if (e.series.length >= n) finExercice(nom);
+    if (e.series.length >= n && !L.some((x) => x.k > k0)) finExercice(nom);
     else {
-      const der = derniereFois(nom), ci = der ? cible(der, nom) : null;
-      lancerRepos(nom, `${nom} · série ${e.series.length + 1}/${n} ensuite`, `${kg(st.c)} kg × ${ci?.r && ci.c === st.c ? ci.r : st.r}`);
+      const suiv = L.find((x) => x.k === k0 + 1);
+      lancerRepos(nom, `${nom} · série ${e.series.length + 1}/${Math.max(n, L.length)} ensuite`, suiv ? `${kg(suiv.c)} kg × ${suiv.r}` : "");
     }
     minu.effort = { nom, i: e.series.length - 1 }; garder();   // l'effort se note pendant le repos
-  } else if (t.classList.contains("serie")) {
-    const i = Number(t.dataset.serie);
-    choisie = choisie?.[0] === t.dataset.nom && choisie[1] === i ? null : [t.dataset.nom, i];
-    ouvert = t.dataset.nom;
+  } else if (t.dataset.ligne != null) {
+    const nm = t.dataset.nom, k = Number(t.dataset.ligne);
+    if (ouvert === nm && choisie?.[0] === nm && choisie[1] === k) choisie = null;
+    else { ouvert = nm; choisie = [nm, k]; }
   } else if (t.hasAttribute("data-retirer")) {
-    const e = s.exos.find((x) => x.nom === choisie[0]);
-    e.series.splice(choisie[1], 1);
-    if (!e.series.length) s.exos = s.exos.filter((x) => x !== e);
-    choisie = null; sauver();
+    const { ks } = lignesDe(nom);
+    retirerSerie(nom, ks);
+  } else if (t.hasAttribute("data-deselect")) {
+    choisie = null;
+  } else if (t.hasAttribute("data-plus-serie")) {
+    lignesDe(nom).st.extra++;
   } else if (t.id === "ajouter") {
     ouvrirAjout(); return;
   } else return;
@@ -946,7 +1011,7 @@ $("#fermer-ajout").addEventListener("click", () => $("#ajout").close());
 // répétitions), pour la série identique qu'on vient de refaire.
 let glisse = null, annulation = null;
 document.addEventListener("touchstart", (ev) => {
-  const el = ev.target.closest(".serie");
+  const el = ev.target.closest(".ls.fait, .serie");
   glisse = el ? { el, x: ev.touches[0].clientX, y: ev.touches[0].clientY } : null;
 }, { passive: true });
 document.addEventListener("touchmove", (ev) => {
@@ -965,17 +1030,12 @@ document.addEventListener("touchend", (ev) => {
   el.style.transform = ""; el.style.background = "";
   if (Math.abs(dx) < 60 || Math.abs(dy) > Math.abs(dx)) return;
   sansClic = Date.now();
-  const nom = el.dataset.nom, i = Number(el.dataset.serie), s = seanceDuJour();
-  const e = s.exos.find((z) => z.nom === nom);
+  const nom = el.dataset.nom, i = Number(el.dataset.ligne), e = seanceDuJour().exos.find((z) => z.nom === nom);
   if (!e?.series?.[i]) return;
-  if (dx < 0) {
-    const [serie] = e.series.splice(i, 1);
-    const ordre = s.exos.indexOf(e);
-    if (!e.series.length) s.exos = s.exos.filter((z) => z !== e);
-    annulation = { nom, i, serie, ordre };
-    toast(`Série ${kg(serie.c)}×${serie.r} retirée`, true);
-  } else {
+  if (dx < 0) retirerSerie(nom, i);
+  else {
     e.series.splice(i + 1, 0, { c: e.series[i].c, r: e.series[i].r, t: new Date().toTimeString().slice(0, 8) });
+    decaler(nom, i, 1);
     toast(`Série ${kg(e.series[i].c)}×${e.series[i].r} recopiée`, false);
   }
   navigator.vibrate?.(25);
@@ -996,6 +1056,7 @@ $("#toast").addEventListener("click", (ev) => {
   let e = s.exos.find((z) => z.nom === nom);
   if (!e) { e = { nom, series: [] }; s.exos.splice(Math.min(ordre, s.exos.length), 0, e); }
   e.series.splice(Math.min(i, e.series.length), 0, serie);
+  decaler(nom, i - 1, 1);
   annulation = null; $("#toast").classList.remove("vu"); sauver(); dessiner();
 });
 

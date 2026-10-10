@@ -26,6 +26,10 @@ service worker) pour noter ses séries au téléphone, à la salle, même sans r
   anglais, les muscles, trois consignes, l'erreur à éviter et le mémo de réglage. Textes dans `fiches.js`
   (clé = nom exact de `sante/sport/exercices.md`), photos de free-exercise-db (domaine public) dans
   `fiches/`, mises en cache à l'installation pour marcher sans réseau.
+- **Saisie en lignes** (sur le modèle d'openGym) : carte ouverte, une ligne par série, faites puis prévues,
+  pré-remplies (la cible, puis la ligne d'avant). Le rond de la prochaine ligne la valide. Toucher une ligne
+  la sélectionne pour les gros boutons ±2,5 / ±1 : une ligne prévue se règle (les suivantes suivent la
+  charge), une série faite se corrige en place, avec sa réserve. « + une série » en ajoute une prévue.
 - **Pendant la séance** : avancement (séries faites sur prévues, durée), séries restantes en pointillé à la
   charge prévue, étiquettes du muscle (avec sa fatigue) et du record. Sous le minuteur de repos, « Il en restait
   combien ? » (0 à 4+, facultatif) : la réserve est écrite `@N` dans seances.md. L'écran clignote à la fin du
